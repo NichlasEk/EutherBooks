@@ -89,6 +89,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     library = Library(settings.library_dir)
     store = JobStore(settings.data_dir)
+    store.reset_incomplete()
     backend = backend_from_name(settings.tts_backend)
     queue = TtsQueue(library, store, backend, settings.audio_dir)
 

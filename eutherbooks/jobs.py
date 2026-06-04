@@ -16,6 +16,16 @@ DEFAULT_MAX_CHARS_PER_AUDIO_FILE = 4_000
 DEFAULT_PIPER_MAX_CHARS_PER_AUDIO_FILE = 900
 
 
+def _worker_parallelism() -> int:
+    try:
+        return max(1, int(os.environ.get("EUTHERBOOKS_TTS_PARALLELISM", "1")))
+    except ValueError:
+        return 1
+
+
+_TTS_WORKER_SEMAPHORE = threading.Semaphore(_worker_parallelism())
+
+
 class JobStore:
     def __init__(self, data_dir: Path):
         self.path = data_dir / "jobs.json"
@@ -36,6 +46,20 @@ class JobStore:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             payload = {job_id: asdict(value) for job_id, value in jobs.items()}
             self.path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    def reset_incomplete(self, reason: str = "Interrupted by service restart.") -> None:
+        with self._lock:
+            jobs = self._read()
+            changed = False
+            for job in jobs.values():
+                if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
+                    job.status = JobStatus.FAILED
+                    job.error = reason
+                    changed = True
+            if changed:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                payload = {job_id: asdict(value) for job_id, value in jobs.items()}
+                self.path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def _read(self) -> dict[str, TtsJob]:
         if not self.path.exists():
@@ -66,8 +90,13 @@ class TtsQueue:
     def enqueue(self, book_id: str, language: str, voice: str, chapter_indexes: list[int] | None = None) -> TtsJob:
         chapters = self.library.chapters_for(book_id)
         indexes = chapter_indexes if chapter_indexes is not None else [chapter.index for chapter in chapters]
+        job_id = stable_job_id(book_id, f"{self.backend.name}:{voice}", indexes)
+        existing = self.store.get(job_id)
+        if existing and existing.status in {JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.DONE}:
+            return existing
+
         job = TtsJob(
-            id=stable_job_id(book_id, f"{self.backend.name}:{voice}", indexes),
+            id=job_id,
             book_id=book_id,
             status=JobStatus.QUEUED,
             language=language,
@@ -83,32 +112,37 @@ class TtsQueue:
         job = self.store.get(job_id)
         if job is None:
             return
-        job.status = JobStatus.RUNNING
-        self.store.put(job)
 
-        try:
-            chapters = {chapter.index: chapter for chapter in self.library.chapters_for(job.book_id)}
-            audio_files: list[str] = []
-            for chapter_index in job.chapter_indexes:
-                chapter = chapters[chapter_index]
-                chunks = _split_for_tts(chapter.text, max_chars=_max_chars_for_backend(self.backend.name))
-                for chunk_index, chunk in enumerate(chunks):
-                    relative = Path(job.book_id) / job.id / f"{chapter_index:04d}-{chunk_index:03d}.wav"
-                    output_path = self.audio_dir / relative
-                    if not output_path.exists() or output_path.stat().st_size == 0:
-                        self.backend.synthesize(chunk, output_path, job.language, job.voice)
-                    audio_files.append(relative.as_posix())
-                    job.audio_files = audio_files
-                    self.store.put(job)
-
-            job.audio_files = audio_files
-            job.status = JobStatus.DONE
-            job.error = None
-        except Exception as exc:  # noqa: BLE001
-            job.status = JobStatus.FAILED
-            job.error = str(exc)
-        finally:
+        with _TTS_WORKER_SEMAPHORE:
+            job = self.store.get(job_id)
+            if job is None or job.status != JobStatus.QUEUED:
+                return
+            job.status = JobStatus.RUNNING
             self.store.put(job)
+
+            try:
+                chapters = {chapter.index: chapter for chapter in self.library.chapters_for(job.book_id)}
+                audio_files: list[str] = []
+                for chapter_index in job.chapter_indexes:
+                    chapter = chapters[chapter_index]
+                    chunks = _split_for_tts(chapter.text, max_chars=_max_chars_for_backend(self.backend.name))
+                    for chunk_index, chunk in enumerate(chunks):
+                        relative = Path(job.book_id) / job.id / f"{chapter_index:04d}-{chunk_index:03d}.wav"
+                        output_path = self.audio_dir / relative
+                        if not output_path.exists() or output_path.stat().st_size == 0:
+                            self.backend.synthesize(chunk, output_path, job.language, job.voice)
+                        audio_files.append(relative.as_posix())
+                        job.audio_files = audio_files
+                        self.store.put(job)
+
+                job.audio_files = audio_files
+                job.status = JobStatus.DONE
+                job.error = None
+            except Exception as exc:  # noqa: BLE001
+                job.status = JobStatus.FAILED
+                job.error = str(exc)
+            finally:
+                self.store.put(job)
 
 
 def _max_chars_for_backend(backend_name: str) -> int:
