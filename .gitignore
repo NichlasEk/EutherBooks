@@ -4,7 +4,12 @@ __pycache__/
 .ruff_cache/
 .venv/
 *.egg-info/
+models/*
+tools/*
 data/*
 library/*
+!models/.gitkeep
+!models/README.md
+!tools/.gitkeep
 !data/.gitkeep
 !library/.gitkeep

@@ -1,0 +1,21 @@
+[Unit]
+Description=EutherBooks API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nichlas
+Group=nichlas
+WorkingDirectory=/home/nichlas/EutherBooks
+Environment=EUTHERBOOKS_LIBRARY_DIR=/home/nichlas/EutherBooks/library
+Environment=EUTHERBOOKS_DATA_DIR=/home/nichlas/EutherBooks/data
+Environment=EUTHERBOOKS_TTS_BACKEND=piper
+Environment=EUTHERBOOKS_TTS_VOICE=/home/nichlas/EutherBooks/models/piper/sv_SE-nst-medium.onnx
+Environment=EUTHERBOOKS_PIPER_BIN=/home/nichlas/EutherBooks/tools/piper/piper
+ExecStart=/home/nichlas/EutherBooks/.venv/bin/uvicorn eutherbooks.api:app --host 127.0.0.1 --port 8088
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

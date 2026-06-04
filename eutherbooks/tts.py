@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -39,25 +40,59 @@ class PiperBackend(TtsBackend):
     name = "piper"
 
     def synthesize(self, text: str, output_path: Path, language: str, voice: str) -> None:
-        binary = which("piper")
+        binary = _piper_binary()
         if binary is None:
-            raise TtsError("Install piper or choose another TTS backend.")
-        model = voice
-        if not model:
+            raise TtsError(
+                "Install Piper TTS, set EUTHERBOOKS_PIPER_BIN, or place the binary at tools/piper/piper."
+            )
+        if not voice:
             raise TtsError("Piper backend requires EUTHERBOOKS_TTS_VOICE to point to a model file.")
+        model = Path(voice).expanduser()
+        if not model.exists():
+            raise TtsError(f"Piper model file does not exist: {model}")
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile("w", encoding="utf-8") as input_file:
             input_file.write(text)
             input_file.flush()
             subprocess.run(
-                [binary, "--model", model, "--output_file", str(output_path)],
+                [str(binary), "--model", str(model), "--output_file", str(output_path)],
                 stdin=open(input_file.name, encoding="utf-8"),
                 check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
             )
+
+
+def _piper_binary() -> Path | None:
+    configured = os.environ.get("EUTHERBOOKS_PIPER_BIN")
+    candidates = [
+        Path(configured).expanduser() if configured else None,
+        Path("tools/piper/piper").resolve(),
+        Path("tools/piper/piper/piper").resolve(),
+    ]
+    for candidate in candidates:
+        if candidate and candidate.exists() and candidate.is_file():
+            return candidate
+
+    path_binary = which("piper")
+    if path_binary:
+        binary = Path(path_binary)
+        try:
+            help_output = subprocess.run(
+                [str(binary), "--help"],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=3,
+            ).stdout.lower()
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if "--model" in help_output and "--output_file" in help_output:
+            return binary
+    return None
 
 
 def backend_from_name(name: str) -> TtsBackend:
@@ -67,4 +102,3 @@ def backend_from_name(name: str) -> TtsBackend:
     if normalized == "piper":
         return PiperBackend()
     raise TtsError(f"Unknown TTS backend: {name}")
-
