@@ -5,6 +5,7 @@ import os
 import threading
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from .ids import stable_job_id
 from .library import Library
@@ -75,6 +76,7 @@ class JobStore:
                 chapter_indexes=list(value["chapter_indexes"]),
                 audio_files=list(value.get("audio_files", [])),
                 total_audio_files=int(value.get("total_audio_files", 0)),
+                tts_options=dict(value.get("tts_options", {})),
                 error=value.get("error"),
             )
             for job_id, value in raw.items()
@@ -88,10 +90,19 @@ class TtsQueue:
         self.backend = backend
         self.audio_dir = audio_dir
 
-    def enqueue(self, book_id: str, language: str, voice: str, chapter_indexes: list[int] | None = None) -> TtsJob:
+    def enqueue(
+        self,
+        book_id: str,
+        language: str,
+        voice: str,
+        chapter_indexes: list[int] | None = None,
+        tts_options: dict[str, Any] | None = None,
+    ) -> TtsJob:
         chapters = self.library.chapters_for(book_id)
         indexes = chapter_indexes if chapter_indexes is not None else [chapter.index for chapter in chapters]
-        job_id = stable_job_id(book_id, f"{self.backend.name}:{voice}", indexes)
+        options = _normalized_tts_options(tts_options or {})
+        options_key = json.dumps(options, sort_keys=True, separators=(",", ":"))
+        job_id = stable_job_id(book_id, f"{self.backend.name}:{voice}:{options_key}", indexes)
         total_audio_files = self._total_audio_files(chapters, indexes)
         existing = self.store.get(job_id)
         if existing and existing.status in {JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.DONE}:
@@ -108,6 +119,7 @@ class TtsQueue:
             voice=voice,
             chapter_indexes=indexes,
             total_audio_files=total_audio_files,
+            tts_options=options,
         )
         self.store.put(job)
         thread = threading.Thread(target=self._run_job, args=(job.id,), daemon=True)
@@ -141,7 +153,7 @@ class TtsQueue:
                         relative = Path(job.book_id) / job.id / f"{chapter_index:04d}-{chunk_index:03d}.wav"
                         output_path = self.audio_dir / relative
                         if not output_path.exists() or output_path.stat().st_size == 0:
-                            self.backend.synthesize(chunk, output_path, job.language, job.voice)
+                            self.backend.synthesize(chunk, output_path, job.language, job.voice, job.tts_options)
                         audio_files.append(relative.as_posix())
                         job.audio_files = audio_files
                         self.store.put(job)
@@ -163,6 +175,25 @@ def _max_chars_for_backend(backend_name: str) -> int:
         return max(200, int(os.environ.get(env_name, fallback)))
     except ValueError:
         return fallback
+
+
+def _normalized_tts_options(options: dict[str, Any]) -> dict[str, float]:
+    normalized: dict[str, float] = {}
+    ranges = {
+        "length_scale": (0.65, 1.6),
+        "noise_scale": (0.1, 1.2),
+        "noise_w": (0.1, 1.4),
+        "sentence_silence": (0.0, 1.5),
+    }
+    for key, (minimum, maximum) in ranges.items():
+        if key not in options or options[key] is None:
+            continue
+        try:
+            value = float(options[key])
+        except (TypeError, ValueError):
+            continue
+        normalized[key] = min(maximum, max(minimum, value))
+    return normalized
 
 
 def _split_for_tts(text: str, max_chars: int = DEFAULT_MAX_CHARS_PER_AUDIO_FILE) -> list[str]:

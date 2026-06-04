@@ -57,6 +57,18 @@ class CreateJobRequest(BaseModel):
     language: str | None = Field(default=None, examples=["sv"])
     voice: str | None = Field(default=None, examples=["sv"])
     chapters: list[int] | None = None
+    length_scale: float | None = Field(default=None, examples=[1.0])
+    noise_scale: float | None = Field(default=None, examples=[0.667])
+    noise_w: float | None = Field(default=None, examples=[0.8])
+    sentence_silence: float | None = Field(default=None, examples=[0.2])
+
+
+class VoiceResponse(BaseModel):
+    id: str
+    label: str
+    language: str
+    backend: str
+    path: str
 
 
 class JobResponse(BaseModel):
@@ -68,6 +80,7 @@ class JobResponse(BaseModel):
     chapter_indexes: list[int]
     audio_files: list[str]
     total_audio_files: int
+    tts_options: dict[str, float]
     error: str | None
 
     @classmethod
@@ -81,6 +94,7 @@ class JobResponse(BaseModel):
             chapter_indexes=job.chapter_indexes,
             audio_files=job.audio_files,
             total_audio_files=job.total_audio_files,
+            tts_options=job.tts_options,
             error=job.error,
         )
 
@@ -126,6 +140,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok", "tts_backend": backend.name}
 
+    @app.get("/voices", response_model=list[VoiceResponse])
+    def list_voices() -> list[VoiceResponse]:
+        return _local_piper_voices()
+
     @app.get("/books", response_model=list[BookResponse])
     def list_books(lib: Library = Depends(get_library)) -> list[BookResponse]:
         return [BookResponse.from_book(book, settings.library_dir) for book in lib.list_books()]
@@ -167,6 +185,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 language=request.language or settings.default_language,
                 voice=request.voice or settings.tts_voice,
                 chapter_indexes=request.chapters,
+                tts_options={
+                    "length_scale": request.length_scale,
+                    "noise_scale": request.noise_scale,
+                    "noise_w": request.noise_w,
+                    "sentence_silence": request.sentence_silence,
+                },
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Book not found") from exc
@@ -198,3 +222,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 app = create_app()
+
+
+def _local_piper_voices() -> list[VoiceResponse]:
+    voice_dir = Path("models/piper")
+    voices: list[VoiceResponse] = []
+    for model_path in sorted(voice_dir.glob("*.onnx")):
+        stem = model_path.stem
+        parts = stem.split("-")
+        language = parts[0] if parts else "unknown"
+        name = parts[1] if len(parts) > 1 else stem
+        quality = parts[2] if len(parts) > 2 else ""
+        voices.append(
+            VoiceResponse(
+                id=stem,
+                label=" ".join(part for part in [language, name, quality] if part),
+                language=language,
+                backend="piper",
+                path=model_path.as_posix(),
+            )
+        )
+    if not voices:
+        voices.extend(
+            [
+                VoiceResponse(
+                    id="sv",
+                    label="Swedish default",
+                    language="sv",
+                    backend="piper",
+                    path="models/piper/sv_SE-nst-medium.onnx",
+                ),
+                VoiceResponse(
+                    id="en",
+                    label="English default",
+                    language="en",
+                    backend="piper",
+                    path="models/piper/en_US-lessac-medium.onnx",
+                ),
+            ]
+        )
+    return voices

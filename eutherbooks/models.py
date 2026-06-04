@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 
 class BookFormat(str, Enum):
@@ -45,4 +46,5 @@ class TtsJob:
     chapter_indexes: list[int]
     audio_files: list[str] = field(default_factory=list)
     total_audio_files: int = 0
+    tts_options: dict[str, Any] = field(default_factory=dict)
     error: str | None = None

@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from shutil import which
+from typing import Any
 
 
 class TtsError(RuntimeError):
@@ -14,14 +15,28 @@ class TtsError(RuntimeError):
 class TtsBackend:
     name = "base"
 
-    def synthesize(self, text: str, output_path: Path, language: str, voice: str) -> None:
+    def synthesize(
+        self,
+        text: str,
+        output_path: Path,
+        language: str,
+        voice: str,
+        options: dict[str, Any] | None = None,
+    ) -> None:
         raise NotImplementedError
 
 
 class EspeakBackend(TtsBackend):
     name = "espeak"
 
-    def synthesize(self, text: str, output_path: Path, language: str, voice: str) -> None:
+    def synthesize(
+        self,
+        text: str,
+        output_path: Path,
+        language: str,
+        voice: str,
+        options: dict[str, Any] | None = None,
+    ) -> None:
         binary = which("espeak-ng") or which("espeak")
         if binary is None:
             raise TtsError("Install espeak-ng or choose another TTS backend.")
@@ -39,7 +54,14 @@ class EspeakBackend(TtsBackend):
 class PiperBackend(TtsBackend):
     name = "piper"
 
-    def synthesize(self, text: str, output_path: Path, language: str, voice: str) -> None:
+    def synthesize(
+        self,
+        text: str,
+        output_path: Path,
+        language: str,
+        voice: str,
+        options: dict[str, Any] | None = None,
+    ) -> None:
         binary = _piper_binary()
         if binary is None:
             raise TtsError(
@@ -55,8 +77,10 @@ class PiperBackend(TtsBackend):
         with tempfile.NamedTemporaryFile("w", encoding="utf-8") as input_file:
             input_file.write(text)
             input_file.flush()
+            command = [str(binary), "--model", str(model), "--output_file", str(output_path)]
+            command.extend(_piper_option_args(options or {}))
             subprocess.run(
-                [str(binary), "--model", str(model), "--output_file", str(output_path)],
+                command,
                 stdin=open(input_file.name, encoding="utf-8"),
                 check=True,
                 stdout=subprocess.PIPE,
@@ -99,6 +123,9 @@ def _piper_model_path(voice: str, language: str) -> Path:
     configured = Path(voice).expanduser()
     if configured.exists() or configured.suffix == ".onnx" or configured.is_absolute():
         return configured
+    local_model = Path("models/piper") / f"{voice}.onnx"
+    if local_model.exists():
+        return local_model
 
     normalized = voice.strip().lower().replace("-", "_")
     language_normalized = language.strip().lower().replace("-", "_")
@@ -112,6 +139,26 @@ def _piper_model_path(voice: str, language: str) -> Path:
             os.environ.get("EUTHERBOOKS_PIPER_VOICE_EN", "models/piper/en_US-lessac-medium.onnx")
         ).expanduser()
     return configured
+
+
+def _piper_option_args(options: dict[str, Any]) -> list[str]:
+    args: list[str] = []
+    option_map = {
+        "length_scale": "--length_scale",
+        "noise_scale": "--noise_scale",
+        "noise_w": "--noise_w",
+        "sentence_silence": "--sentence_silence",
+    }
+    for key, flag in option_map.items():
+        value = options.get(key)
+        if value is None:
+            continue
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            continue
+        args.extend([flag, f"{numeric:g}"])
+    return args
 
 
 def backend_from_name(name: str) -> TtsBackend:

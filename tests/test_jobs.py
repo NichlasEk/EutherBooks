@@ -90,7 +90,7 @@ def test_tts_queue_backfills_total_for_existing_job(tmp_path: Path) -> None:
     book = library.list_books()[0]
     store = JobStore(tmp_path / "data")
     backend = RecordingBackend()
-    job_id = stable_job_id(book.id, "recording:en", [0])
+    job_id = stable_job_id(book.id, "recording:en:{}", [0])
     store.put(
         TtsJob(
             id=job_id,
