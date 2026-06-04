@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 from dataclasses import asdict
 from pathlib import Path
@@ -11,7 +12,8 @@ from .models import JobStatus, TtsJob
 from .tts import TtsBackend
 
 
-MAX_CHARS_PER_AUDIO_FILE = 4_000
+DEFAULT_MAX_CHARS_PER_AUDIO_FILE = 4_000
+DEFAULT_PIPER_MAX_CHARS_PER_AUDIO_FILE = 900
 
 
 class JobStore:
@@ -65,7 +67,7 @@ class TtsQueue:
         chapters = self.library.chapters_for(book_id)
         indexes = chapter_indexes if chapter_indexes is not None else [chapter.index for chapter in chapters]
         job = TtsJob(
-            id=stable_job_id(book_id, voice, indexes),
+            id=stable_job_id(book_id, f"{self.backend.name}:{voice}", indexes),
             book_id=book_id,
             status=JobStatus.QUEUED,
             language=language,
@@ -89,13 +91,15 @@ class TtsQueue:
             audio_files: list[str] = []
             for chapter_index in job.chapter_indexes:
                 chapter = chapters[chapter_index]
-                chunks = _split_for_tts(chapter.text)
+                chunks = _split_for_tts(chapter.text, max_chars=_max_chars_for_backend(self.backend.name))
                 for chunk_index, chunk in enumerate(chunks):
                     relative = Path(job.book_id) / job.id / f"{chapter_index:04d}-{chunk_index:03d}.wav"
                     output_path = self.audio_dir / relative
-                    if not output_path.exists():
+                    if not output_path.exists() or output_path.stat().st_size == 0:
                         self.backend.synthesize(chunk, output_path, job.language, job.voice)
                     audio_files.append(relative.as_posix())
+                    job.audio_files = audio_files
+                    self.store.put(job)
 
             job.audio_files = audio_files
             job.status = JobStatus.DONE
@@ -107,19 +111,32 @@ class TtsQueue:
             self.store.put(job)
 
 
-def _split_for_tts(text: str) -> list[str]:
+def _max_chars_for_backend(backend_name: str) -> int:
+    env_name = "EUTHERBOOKS_PIPER_MAX_CHARS" if backend_name == "piper" else "EUTHERBOOKS_MAX_CHARS"
+    fallback = DEFAULT_PIPER_MAX_CHARS_PER_AUDIO_FILE if backend_name == "piper" else DEFAULT_MAX_CHARS_PER_AUDIO_FILE
+    try:
+        return max(200, int(os.environ.get(env_name, fallback)))
+    except ValueError:
+        return fallback
+
+
+def _split_for_tts(text: str, max_chars: int = DEFAULT_MAX_CHARS_PER_AUDIO_FILE) -> list[str]:
     paragraphs = [part.strip() for part in text.splitlines() if part.strip()]
     chunks: list[str] = []
     current: list[str] = []
     current_len = 0
     for paragraph in paragraphs or [text]:
-        if current and current_len + len(paragraph) > MAX_CHARS_PER_AUDIO_FILE:
+        if current and current_len + len(paragraph) > max_chars:
             chunks.append("\n".join(current))
             current = []
             current_len = 0
+        while len(paragraph) > max_chars:
+            chunks.append(paragraph[:max_chars])
+            paragraph = paragraph[max_chars:].strip()
+        if not paragraph:
+            continue
         current.append(paragraph)
         current_len += len(paragraph)
     if current:
         chunks.append("\n".join(current))
     return chunks
-

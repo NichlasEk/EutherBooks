@@ -47,7 +47,7 @@ class PiperBackend(TtsBackend):
             )
         if not voice:
             raise TtsError("Piper backend requires EUTHERBOOKS_TTS_VOICE to point to a model file.")
-        model = Path(voice).expanduser()
+        model = _piper_model_path(voice, language)
         if not model.exists():
             raise TtsError(f"Piper model file does not exist: {model}")
 
@@ -93,6 +93,25 @@ def _piper_binary() -> Path | None:
         if "--model" in help_output and "--output_file" in help_output:
             return binary
     return None
+
+
+def _piper_model_path(voice: str, language: str) -> Path:
+    configured = Path(voice).expanduser()
+    if configured.exists() or configured.suffix == ".onnx" or configured.is_absolute():
+        return configured
+
+    normalized = voice.strip().lower().replace("-", "_")
+    language_normalized = language.strip().lower().replace("-", "_")
+    alias = normalized or language_normalized
+    if alias in {"sv", "se", "sv_se", "sv_se_nst"} or language_normalized in {"sv", "sv_se"}:
+        return Path(
+            os.environ.get("EUTHERBOOKS_PIPER_VOICE_SV", "models/piper/sv_SE-nst-medium.onnx")
+        ).expanduser()
+    if alias in {"en", "en_us", "en_us_lessac"} or language_normalized in {"en", "en_us"}:
+        return Path(
+            os.environ.get("EUTHERBOOKS_PIPER_VOICE_EN", "models/piper/en_US-lessac-medium.onnx")
+        ).expanduser()
+    return configured
 
 
 def backend_from_name(name: str) -> TtsBackend:
