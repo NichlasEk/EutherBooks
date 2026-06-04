@@ -1,0 +1,33 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from eutherbooks.library import Library
+
+
+def test_library_lists_nested_text_books(tmp_path: Path) -> None:
+    library_dir = tmp_path / "library"
+    book_path = library_dir / "svenska" / "bok.txt"
+    book_path.parent.mkdir(parents=True)
+    book_path.write_text("Kapitel 1\n\nDet var en gång.", encoding="utf-8")
+
+    books = Library(library_dir).list_books()
+
+    assert len(books) == 1
+    assert books[0].title == "bok"
+    assert books[0].format.value == "txt"
+
+
+def test_library_extracts_text_chapters(tmp_path: Path) -> None:
+    library_dir = tmp_path / "library"
+    book_path = library_dir / "bok.txt"
+    book_path.parent.mkdir(parents=True)
+    book_path.write_text("Första kapitlet\n\nText här.\n\nAndra stycket.", encoding="utf-8")
+
+    library = Library(library_dir)
+    book = library.list_books()[0]
+    chapters = library.chapters_for(book.id)
+
+    assert len(chapters) == 1
+    assert "Text här." in chapters[0].text
+

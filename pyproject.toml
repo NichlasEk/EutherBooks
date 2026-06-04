@@ -1,0 +1,25 @@
+[project]
+name = "eutherbooks"
+version = "0.1.0"
+description = "Local ebook-to-audiobook service module for EutherOxide."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+]
+
+[project.scripts]
+eutherbooks = "eutherbooks.main:run"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["eutherbooks*"]
