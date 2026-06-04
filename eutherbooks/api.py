@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
-
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -98,6 +97,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version="0.1.0",
         description="Local ebook-to-audiobook service for EutherOxide.",
     )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://127.0.0.1:5173",
+            "http://localhost:5173",
+            "http://apothictech.se:8080",
+            "https://apothictech.se",
+        ],
+        allow_origin_regex=r"https?://(apothictech\.se|127\.0\.0\.1|localhost|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?",
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["*"],
+    )
 
     def get_library() -> Library:
         return library
@@ -113,25 +124,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"status": "ok", "tts_backend": backend.name}
 
     @app.get("/books", response_model=list[BookResponse])
-    def list_books(lib: Annotated[Library, Depends(get_library)]) -> list[BookResponse]:
+    def list_books(lib: Library = Depends(get_library)) -> list[BookResponse]:
         return [BookResponse.from_book(book, settings.library_dir) for book in lib.list_books()]
 
     @app.get("/books/{book_id}", response_model=BookResponse)
-    def get_book(book_id: str, lib: Annotated[Library, Depends(get_library)]) -> BookResponse:
+    def get_book(book_id: str, lib: Library = Depends(get_library)) -> BookResponse:
         book = lib.get_book(book_id)
         if book is None:
             raise HTTPException(status_code=404, detail="Book not found")
         return BookResponse.from_book(book, settings.library_dir)
 
     @app.get("/books/{book_id}/chapters", response_model=list[ChapterResponse])
-    def list_chapters(book_id: str, lib: Annotated[Library, Depends(get_library)]) -> list[ChapterResponse]:
+    def list_chapters(book_id: str, lib: Library = Depends(get_library)) -> list[ChapterResponse]:
         try:
             return [ChapterResponse.from_chapter(chapter) for chapter in lib.chapters_for(book_id)]
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Book not found") from exc
 
     @app.get("/books/{book_id}/chapters/{chapter_index}", response_model=ChapterTextResponse)
-    def get_chapter(book_id: str, chapter_index: int, lib: Annotated[Library, Depends(get_library)]) -> ChapterTextResponse:
+    def get_chapter(book_id: str, chapter_index: int, lib: Library = Depends(get_library)) -> ChapterTextResponse:
         try:
             chapters = lib.chapters_for(book_id)
         except KeyError as exc:
@@ -145,7 +156,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def create_tts_job(
         book_id: str,
         request: CreateJobRequest,
-        tts_queue: Annotated[TtsQueue, Depends(get_queue)],
+        tts_queue: TtsQueue = Depends(get_queue),
     ) -> JobResponse:
         try:
             job = tts_queue.enqueue(
@@ -161,11 +172,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JobResponse.from_job(job)
 
     @app.get("/jobs", response_model=list[JobResponse])
-    def list_jobs(job_store: Annotated[JobStore, Depends(get_store)]) -> list[JobResponse]:
+    def list_jobs(job_store: JobStore = Depends(get_store)) -> list[JobResponse]:
         return [JobResponse.from_job(job) for job in job_store.list_jobs()]
 
     @app.get("/jobs/{job_id}", response_model=JobResponse)
-    def get_job(job_id: str, job_store: Annotated[JobStore, Depends(get_store)]) -> JobResponse:
+    def get_job(job_id: str, job_store: JobStore = Depends(get_store)) -> JobResponse:
         job = job_store.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found")
@@ -184,4 +195,3 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 app = create_app()
-
