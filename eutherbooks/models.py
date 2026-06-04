@@ -44,5 +44,5 @@ class TtsJob:
     voice: str
     chapter_indexes: list[int]
     audio_files: list[str] = field(default_factory=list)
+    total_audio_files: int = 0
     error: str | None = None
-

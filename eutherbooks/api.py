@@ -67,6 +67,7 @@ class JobResponse(BaseModel):
     voice: str
     chapter_indexes: list[int]
     audio_files: list[str]
+    total_audio_files: int
     error: str | None
 
     @classmethod
@@ -79,6 +80,7 @@ class JobResponse(BaseModel):
             voice=job.voice,
             chapter_indexes=job.chapter_indexes,
             audio_files=job.audio_files,
+            total_audio_files=job.total_audio_files,
             error=job.error,
         )
 

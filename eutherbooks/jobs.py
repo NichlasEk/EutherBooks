@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .ids import stable_job_id
 from .library import Library
-from .models import JobStatus, TtsJob
+from .models import Chapter, JobStatus, TtsJob
 from .tts import TtsBackend
 
 
@@ -74,6 +74,7 @@ class JobStore:
                 voice=value["voice"],
                 chapter_indexes=list(value["chapter_indexes"]),
                 audio_files=list(value.get("audio_files", [])),
+                total_audio_files=int(value.get("total_audio_files", 0)),
                 error=value.get("error"),
             )
             for job_id, value in raw.items()
@@ -91,8 +92,12 @@ class TtsQueue:
         chapters = self.library.chapters_for(book_id)
         indexes = chapter_indexes if chapter_indexes is not None else [chapter.index for chapter in chapters]
         job_id = stable_job_id(book_id, f"{self.backend.name}:{voice}", indexes)
+        total_audio_files = self._total_audio_files(chapters, indexes)
         existing = self.store.get(job_id)
         if existing and existing.status in {JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.DONE}:
+            if existing.total_audio_files <= 0:
+                existing.total_audio_files = total_audio_files
+                self.store.put(existing)
             return existing
 
         job = TtsJob(
@@ -102,11 +107,17 @@ class TtsQueue:
             language=language,
             voice=voice,
             chapter_indexes=indexes,
+            total_audio_files=total_audio_files,
         )
         self.store.put(job)
         thread = threading.Thread(target=self._run_job, args=(job.id,), daemon=True)
         thread.start()
         return job
+
+    def _total_audio_files(self, chapters: list[Chapter], indexes: list[int]) -> int:
+        chapters_by_index = {chapter.index: chapter for chapter in chapters}
+        max_chars = _max_chars_for_backend(self.backend.name)
+        return sum(len(_split_for_tts(chapters_by_index[index].text, max_chars=max_chars)) for index in indexes)
 
     def _run_job(self, job_id: str) -> None:
         job = self.store.get(job_id)
