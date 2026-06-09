@@ -5,7 +5,7 @@ Drop legally sourced ebooks into `library/`, let the service index them, and gen
 
 The first version is deliberately small:
 
-- Recursive library scanning for `.epub`, `.txt`, and `.md`.
+- Recursive library scanning for `.epub`, `.pdf`, `.txt`, and `.md`.
 - EPUB metadata and text extraction using Python standard libraries.
 - TTS job queue with generated `.wav` files under `data/audio/`.
 - Swappable TTS backend interface, currently `espeak` and `piper`.
@@ -35,6 +35,7 @@ library/
   svenska/
     selma-lagerlof/
       nils-holgersson.epub
+      bornholm-2026.pdf
   english/
     sample.txt
 ```

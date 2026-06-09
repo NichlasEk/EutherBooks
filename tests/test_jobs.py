@@ -15,7 +15,14 @@ class RecordingBackend(TtsBackend):
     def __init__(self) -> None:
         self.calls = 0
 
-    def synthesize(self, text: str, output_path: Path, language: str, voice: str) -> None:
+    def synthesize(
+        self,
+        text: str,
+        output_path: Path,
+        language: str,
+        voice: str,
+        options: dict[str, object] | None = None,
+    ) -> None:
         self.calls += 1
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(text, encoding="utf-8")
@@ -32,6 +39,11 @@ def test_job_store_round_trips_jobs(tmp_path: Path) -> None:
         chapter_indexes=[0],
         audio_files=["book1/job1/0000-000.wav"],
         total_audio_files=1,
+        progress_label="Ready",
+        progress_detail="1 audio file generated.",
+        current_chapter_index=0,
+        current_chunk_index=1,
+        total_chunks=1,
     )
 
     store.put(job)
@@ -41,6 +53,40 @@ def test_job_store_round_trips_jobs(tmp_path: Path) -> None:
     assert loaded.status == JobStatus.DONE
     assert loaded.audio_files == ["book1/job1/0000-000.wav"]
     assert loaded.total_audio_files == 1
+    assert loaded.progress_label == "Ready"
+    assert loaded.progress_detail == "1 audio file generated."
+    assert loaded.current_chapter_index == 0
+    assert loaded.current_chunk_index == 1
+    assert loaded.total_chunks == 1
+
+
+def test_job_store_backfills_legacy_progress_fields(tmp_path: Path) -> None:
+    store = JobStore(tmp_path)
+    store.path.parent.mkdir(parents=True, exist_ok=True)
+    store.path.write_text(
+        """
+        {
+          "job1": {
+            "id": "job1",
+            "book_id": "book1",
+            "status": "done",
+            "language": "sv",
+            "voice": "sv",
+            "chapter_indexes": [0],
+            "audio_files": ["book1/job1/0000-000.wav"],
+            "total_audio_files": 1,
+            "tts_options": {}
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    loaded = store.get("job1")
+
+    assert loaded is not None
+    assert loaded.progress_label == "Ready"
+    assert loaded.progress_detail == "1 audio file generated."
 
 
 def test_job_store_resets_incomplete_jobs(tmp_path: Path) -> None:
@@ -62,6 +108,8 @@ def test_job_store_resets_incomplete_jobs(tmp_path: Path) -> None:
     assert loaded is not None
     assert loaded.status == JobStatus.FAILED
     assert loaded.error == "Restarted."
+    assert loaded.progress_label == "Interrupted"
+    assert loaded.progress_detail == "Restarted."
 
 
 def test_tts_queue_reuses_existing_active_job(tmp_path: Path) -> None:

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import html
+import os
 import re
+import tempfile
+import subprocess
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree
@@ -51,6 +54,118 @@ def extract_text_file(path: Path) -> list[Chapter]:
     return split_plain_text(raw)
 
 
+def extract_pdf(path: Path) -> list[Chapter]:
+    try:
+        result = subprocess.run(
+            ["pdftotext", "-enc", "UTF-8", "-layout", str(path), "-"],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except FileNotFoundError as error:
+        raise RuntimeError("pdftotext is required to read PDF files") from error
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or "").strip()
+        message = f"PDF text extraction failed: {detail}" if detail else "PDF text extraction failed"
+        raise RuntimeError(message) from error
+
+    text = result.stdout.strip()
+    if not text:
+        return extract_pdf_ocr(path)
+    return split_plain_text(text)
+
+
+def extract_pdf_ocr(path: Path) -> list[Chapter]:
+    total_pages = pdf_page_count(path)
+    cache_dir = pdf_ocr_cache_dir(path)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cached_pages = sorted(cache_dir.glob("*.txt"))
+    if not cached_pages:
+        batch_size = max(1, int(os.environ.get("EUTHERBOOKS_OCR_BATCH_PAGES", "12")))
+        for page in range(1, min(total_pages, batch_size) + 1):
+            ocr_pdf_page(path, cache_dir, page)
+        cached_pages = sorted(cache_dir.glob("*.txt"))
+
+    chapters = []
+    for page_path in cached_pages:
+        text = page_path.read_text(encoding="utf-8", errors="replace").strip()
+        if len(text) < 20:
+            continue
+        page_number = int(page_path.stem)
+        chapters.append(Chapter(index=len(chapters), title=f"Page {page_number}", text=text))
+    if not chapters:
+        raise RuntimeError("PDF OCR produced no readable text")
+    return chapters
+
+
+def pdf_ocr_cached_page_count(path: Path) -> int:
+    return len(sorted(pdf_ocr_cache_dir(path).glob("*.txt")))
+
+
+def pdf_ocr_next_batch(path: Path, batch_size: int | None = None) -> int:
+    total_pages = pdf_page_count(path)
+    cache_dir = pdf_ocr_cache_dir(path)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    size = batch_size or max(1, int(os.environ.get("EUTHERBOOKS_OCR_BATCH_PAGES", "12")))
+    start_page = pdf_ocr_cached_page_count(path) + 1
+    end_page = min(total_pages, start_page + size - 1)
+    if start_page > total_pages:
+        return 0
+    for page in range(start_page, end_page + 1):
+        ocr_pdf_page(path, cache_dir, page)
+    return end_page - start_page + 1
+
+
+def pdf_page_count(path: Path) -> int:
+    try:
+        result = subprocess.run(
+            ["pdfinfo", str(path)],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError) as error:
+        raise RuntimeError("pdfinfo is required to OCR PDF files") from error
+    match = re.search(r"^Pages:\s+(\d+)\s*$", result.stdout, re.MULTILINE)
+    if not match:
+        raise RuntimeError("Could not determine PDF page count")
+    return int(match.group(1))
+
+
+def pdf_ocr_cache_dir(path: Path) -> Path:
+    return path.parent / ".eutherbooks-cache" / f"{path.name}.ocr"
+
+
+def ocr_pdf_page(path: Path, cache_dir: Path, page: int) -> None:
+    output_path = cache_dir / f"{page:04d}.txt"
+    if output_path.exists():
+        return
+    language = os.environ.get("EUTHERBOOKS_OCR_LANG", "eng+swe")
+    with tempfile.TemporaryDirectory(prefix="eutherbooks-ocr-") as tmp:
+        prefix = Path(tmp) / "page"
+        subprocess.run(
+            ["pdftoppm", "-r", "200", "-f", str(page), "-l", str(page), "-png", str(path), str(prefix)],
+            check=True,
+            capture_output=True,
+        )
+        images = sorted(Path(tmp).glob("page-*.png"))
+        if not images:
+            raise RuntimeError(f"PDF page {page} could not be rendered for OCR")
+        result = subprocess.run(
+            ["tesseract", str(images[0]), "stdout", "-l", language],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    output_path.write_text(result.stdout.strip(), encoding="utf-8")
+
+
 def extract_epub_metadata(path: Path) -> tuple[str | None, str | None]:
     try:
         with zipfile.ZipFile(path) as archive:
@@ -95,6 +210,8 @@ def extract_chapters(path: Path) -> list[Chapter]:
     suffix = path.suffix.lower()
     if suffix == ".epub":
         return extract_epub(path)
+    if suffix == ".pdf":
+        return extract_pdf(path)
     if suffix in {".txt", ".md"}:
         return extract_text_file(path)
     raise ValueError(f"Unsupported ebook format: {path.suffix}")
@@ -128,4 +245,3 @@ def _xml_text(element: ElementTree.Element | None) -> str | None:
         return None
     text = _SPACE_RE.sub(" ", element.text).strip()
     return text or None
-

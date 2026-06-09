@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .ids import stable_job_id
+from .extractors import pdf_ocr_cached_page_count, pdf_ocr_next_batch, pdf_page_count
 from .library import Library
 from .models import Chapter, JobStatus, TtsJob
 from .tts import TtsBackend
@@ -56,6 +57,8 @@ class JobStore:
                 if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
                     job.status = JobStatus.FAILED
                     job.error = reason
+                    job.progress_label = "Interrupted"
+                    job.progress_detail = reason
                     changed = True
             if changed:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -77,6 +80,12 @@ class JobStore:
                 audio_files=list(value.get("audio_files", [])),
                 total_audio_files=int(value.get("total_audio_files", 0)),
                 tts_options=dict(value.get("tts_options", {})),
+                queue_remainder=bool(value.get("queue_remainder", False)),
+                progress_label=_stored_progress_label(value),
+                progress_detail=str(value.get("progress_detail") or _stored_progress_detail(value)),
+                current_chapter_index=value.get("current_chapter_index"),
+                current_chunk_index=int(value.get("current_chunk_index", 0)),
+                total_chunks=int(value.get("total_chunks", 0)),
                 error=value.get("error"),
             )
             for job_id, value in raw.items()
@@ -97,13 +106,23 @@ class TtsQueue:
         voice: str,
         chapter_indexes: list[int] | None = None,
         tts_options: dict[str, Any] | None = None,
+        queue_remainder: bool = False,
     ) -> TtsJob:
         chapters = self.library.chapters_for(book_id)
+        book = self.library.get_book(book_id)
+        pdf_remainder = bool(queue_remainder and book and book.path.suffix.lower() == ".pdf")
         indexes = chapter_indexes if chapter_indexes is not None else [chapter.index for chapter in chapters]
+        if pdf_remainder and not indexes:
+            indexes = [0]
         options = _normalized_tts_options(tts_options or {})
         options_key = json.dumps(options, sort_keys=True, separators=(",", ":"))
-        job_id = stable_job_id(book_id, f"{self.backend.name}:{voice}:{options_key}", indexes)
-        total_audio_files = self._total_audio_files(chapters, indexes)
+        mode_key = ":remainder" if pdf_remainder else ""
+        job_id = stable_job_id(book_id, f"{self.backend.name}:{voice}:{options_key}{mode_key}", indexes)
+        total_audio_files = (
+            max(1, pdf_page_count(book.path) - indexes[0] if book else 0)
+            if pdf_remainder
+            else self._total_audio_files(chapters, indexes)
+        )
         existing = self.store.get(job_id)
         if existing and existing.status in {JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.DONE}:
             if existing.total_audio_files <= 0:
@@ -120,6 +139,10 @@ class TtsQueue:
             chapter_indexes=indexes,
             total_audio_files=total_audio_files,
             tts_options=options,
+            queue_remainder=pdf_remainder,
+            progress_label="Queued",
+            progress_detail="Waiting for a speech worker.",
+            total_chunks=total_audio_files,
         )
         self.store.put(job)
         thread = threading.Thread(target=self._run_job, args=(job.id,), daemon=True)
@@ -141,31 +164,115 @@ class TtsQueue:
             if job is None or job.status != JobStatus.QUEUED:
                 return
             job.status = JobStatus.RUNNING
-            self.store.put(job)
+            self._set_progress(job, "Preparing", "Loading text and speech settings.")
 
             try:
+                if job.queue_remainder:
+                    self._run_progressive_pdf_job(job)
+                    return
                 chapters = {chapter.index: chapter for chapter in self.library.chapters_for(job.book_id)}
                 audio_files: list[str] = []
+                total_chunks = self._total_audio_files(list(chapters.values()), job.chapter_indexes)
+                job.total_chunks = total_chunks
+                job.total_audio_files = max(job.total_audio_files, total_chunks)
+                self.store.put(job)
                 for chapter_index in job.chapter_indexes:
                     chapter = chapters[chapter_index]
                     chunks = _split_for_tts(chapter.text, max_chars=_max_chars_for_backend(self.backend.name))
                     for chunk_index, chunk in enumerate(chunks):
                         relative = Path(job.book_id) / job.id / f"{chapter_index:04d}-{chunk_index:03d}.wav"
                         output_path = self.audio_dir / relative
+                        job.current_chapter_index = chapter_index
+                        job.current_chunk_index = len(audio_files)
+                        self._set_progress(
+                            job,
+                            "Synthesizing speech",
+                            f"{chapter.title}: part {chunk_index + 1}/{len(chunks)} ({len(audio_files) + 1}/{total_chunks})",
+                        )
                         if not output_path.exists() or output_path.stat().st_size == 0:
                             self.backend.synthesize(chunk, output_path, job.language, job.voice, job.tts_options)
                         audio_files.append(relative.as_posix())
                         job.audio_files = audio_files
-                        self.store.put(job)
+                        job.current_chunk_index = len(audio_files)
+                        self._set_progress(
+                            job,
+                            "Audio ready",
+                            f"{len(audio_files)}/{max(job.total_audio_files, len(audio_files))} audio files generated.",
+                        )
 
                 job.audio_files = audio_files
                 job.status = JobStatus.DONE
                 job.error = None
+                job.current_chunk_index = len(audio_files)
+                self._set_progress(job, "Ready", f"{len(audio_files)} audio files generated.")
             except Exception as exc:  # noqa: BLE001
                 job.status = JobStatus.FAILED
                 job.error = str(exc)
+                self._set_progress(job, "Failed", str(exc))
             finally:
                 self.store.put(job)
+
+    def _run_progressive_pdf_job(self, job: TtsJob) -> None:
+        book = self.library.get_book(job.book_id)
+        if book is None:
+            raise KeyError(f"Unknown book id: {job.book_id}")
+        start_index = job.chapter_indexes[0] if job.chapter_indexes else 0
+        total_pages = pdf_page_count(book.path)
+        audio_files = list(job.audio_files)
+        seen_audio = set(audio_files)
+        job.total_chunks = max(job.total_chunks, job.total_audio_files, total_pages - start_index)
+        self._set_progress(
+            job,
+            "Reading PDF",
+            f"Starting at page {start_index + 1}; {pdf_ocr_cached_page_count(book.path)}/{total_pages} pages cached.",
+        )
+
+        while True:
+            chapters = [chapter for chapter in self.library.chapters_for(job.book_id) if chapter.index >= start_index]
+            for chapter in chapters:
+                chunks = _split_for_tts(chapter.text, max_chars=_max_chars_for_backend(self.backend.name))
+                for chunk_index, chunk in enumerate(chunks):
+                    relative = Path(job.book_id) / job.id / f"{chapter.index:04d}-{chunk_index:03d}.wav"
+                    relative_posix = relative.as_posix()
+                    output_path = self.audio_dir / relative
+                    job.current_chapter_index = chapter.index
+                    job.current_chunk_index = len(audio_files)
+                    self._set_progress(
+                        job,
+                        "Synthesizing PDF speech",
+                        f"Page {chapter.index + 1}, part {chunk_index + 1}/{len(chunks)}; {len(audio_files)}/{max(job.total_audio_files, len(audio_files) + 1)} ready.",
+                    )
+                    if not output_path.exists() or output_path.stat().st_size == 0:
+                        self.backend.synthesize(chunk, output_path, job.language, job.voice, job.tts_options)
+                    if relative_posix not in seen_audio:
+                        seen_audio.add(relative_posix)
+                        audio_files.append(relative_posix)
+                        job.audio_files = audio_files
+                        job.total_audio_files = max(job.total_audio_files, len(audio_files), total_pages - start_index)
+                        job.total_chunks = max(job.total_chunks, job.total_audio_files)
+                        job.current_chunk_index = len(audio_files)
+                        self._set_progress(
+                            job,
+                            "PDF audio ready",
+                            f"{len(audio_files)}/{job.total_audio_files} audio files generated.",
+                        )
+
+            if pdf_ocr_cached_page_count(book.path) >= total_pages:
+                break
+            cached_pages = pdf_ocr_cached_page_count(book.path)
+            self._set_progress(job, "OCRing PDF", f"Reading more pages with OCR: {cached_pages}/{total_pages} cached.")
+            pdf_ocr_next_batch(book.path)
+
+        job.audio_files = audio_files
+        job.status = JobStatus.DONE
+        job.error = None
+        job.current_chunk_index = len(audio_files)
+        self._set_progress(job, "Ready", f"{len(audio_files)} audio files generated.")
+
+    def _set_progress(self, job: TtsJob, label: str, detail: str = "") -> None:
+        job.progress_label = label
+        job.progress_detail = detail
+        self.store.put(job)
 
 
 def _max_chars_for_backend(backend_name: str) -> int:
@@ -175,6 +282,40 @@ def _max_chars_for_backend(backend_name: str) -> int:
         return max(200, int(os.environ.get(env_name, fallback)))
     except ValueError:
         return fallback
+
+
+def _stored_progress_label(value: dict[str, Any]) -> str:
+    label = str(value.get("progress_label") or "").strip()
+    if label:
+        return label
+    status = str(value.get("status") or "")
+    if status == JobStatus.DONE.value:
+        return "Ready"
+    if status == JobStatus.FAILED.value:
+        return "Failed"
+    if status == JobStatus.RUNNING.value:
+        return "Running"
+    return "Queued"
+
+
+def _stored_progress_detail(value: dict[str, Any]) -> str:
+    detail = str(value.get("progress_detail") or "").strip()
+    if detail:
+        return detail
+    audio_count = len(value.get("audio_files", []) or [])
+    total = int(value.get("total_audio_files", 0) or 0)
+    status = str(value.get("status") or "")
+    if status == JobStatus.DONE.value:
+        return f"{audio_count} {_audio_file_word(audio_count)} generated."
+    if status == JobStatus.FAILED.value:
+        return str(value.get("error") or "Generation failed.")
+    if status == JobStatus.RUNNING.value and total:
+        return f"{audio_count}/{total} audio files generated."
+    return ""
+
+
+def _audio_file_word(count: int) -> str:
+    return "audio file" if count == 1 else "audio files"
 
 
 def _normalized_tts_options(options: dict[str, Any]) -> dict[str, float]:

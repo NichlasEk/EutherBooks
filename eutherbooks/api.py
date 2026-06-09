@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -61,6 +61,7 @@ class CreateJobRequest(BaseModel):
     noise_scale: float | None = Field(default=None, examples=[0.667])
     noise_w: float | None = Field(default=None, examples=[0.8])
     sentence_silence: float | None = Field(default=None, examples=[0.2])
+    queue_remainder: bool = False
 
 
 class VoiceResponse(BaseModel):
@@ -81,6 +82,12 @@ class JobResponse(BaseModel):
     audio_files: list[str]
     total_audio_files: int
     tts_options: dict[str, float]
+    queue_remainder: bool
+    progress_label: str
+    progress_detail: str
+    current_chapter_index: int | None
+    current_chunk_index: int
+    total_chunks: int
     error: str | None
 
     @classmethod
@@ -95,6 +102,12 @@ class JobResponse(BaseModel):
             audio_files=job.audio_files,
             total_audio_files=job.total_audio_files,
             tts_options=job.tts_options,
+            queue_remainder=job.queue_remainder,
+            progress_label=job.progress_label,
+            progress_detail=job.progress_detail,
+            current_chapter_index=job.current_chapter_index,
+            current_chunk_index=job.current_chunk_index,
+            total_chunks=job.total_chunks,
             error=job.error,
         )
 
@@ -148,6 +161,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def list_books(lib: Library = Depends(get_library)) -> list[BookResponse]:
         return [BookResponse.from_book(book, settings.library_dir) for book in lib.list_books()]
 
+    @app.post("/books/upload", response_model=BookResponse, status_code=201)
+    async def upload_book(request: Request, name: str, lib: Library = Depends(get_library)) -> BookResponse:
+        try:
+            book = lib.import_book_bytes(name, await request.body())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return BookResponse.from_book(book, settings.library_dir)
+
     @app.get("/books/{book_id}", response_model=BookResponse)
     def get_book(book_id: str, lib: Library = Depends(get_library)) -> BookResponse:
         book = lib.get_book(book_id)
@@ -191,6 +212,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "noise_w": request.noise_w,
                     "sentence_silence": request.sentence_silence,
                 },
+                queue_remainder=request.queue_remainder,
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Book not found") from exc
