@@ -20,9 +20,9 @@ DEFAULT_PIPER_MAX_CHARS_PER_AUDIO_FILE = 900
 
 def _worker_parallelism() -> int:
     try:
-        return max(1, int(os.environ.get("EUTHERBOOKS_TTS_PARALLELISM", "1")))
+        return max(1, int(os.environ.get("EUTHERBOOKS_TTS_PARALLELISM", "2")))
     except ValueError:
-        return 1
+        return 2
 
 
 _TTS_WORKER_SEMAPHORE = threading.Semaphore(_worker_parallelism())
@@ -204,7 +204,7 @@ class TtsQueue:
                 job.status = JobStatus.DONE
                 job.error = None
                 job.current_chunk_index = len(audio_files)
-                self._set_progress(job, "Ready", f"{len(audio_files)} audio files generated.")
+                self._set_progress(job, "Ready", f"{len(audio_files)} {_audio_file_word(len(audio_files))} generated.")
             except Exception as exc:  # noqa: BLE001
                 job.status = JobStatus.FAILED
                 job.error = str(exc)
@@ -267,7 +267,7 @@ class TtsQueue:
         job.status = JobStatus.DONE
         job.error = None
         job.current_chunk_index = len(audio_files)
-        self._set_progress(job, "Ready", f"{len(audio_files)} audio files generated.")
+        self._set_progress(job, "Ready", f"{len(audio_files)} {_audio_file_word(len(audio_files))} generated.")
 
     def _set_progress(self, job: TtsJob, label: str, detail: str = "") -> None:
         job.progress_label = label
