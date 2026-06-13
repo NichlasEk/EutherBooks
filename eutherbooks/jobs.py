@@ -325,6 +325,9 @@ def _normalized_tts_options(options: dict[str, Any]) -> dict[str, float]:
         "noise_scale": (0.1, 1.2),
         "noise_w": (0.1, 1.4),
         "sentence_silence": (0.0, 1.5),
+        "cfg_value": (1.0, 3.0),
+        "inference_timesteps": (1.0, 50.0),
+        "max_chunk_chars": (120.0, 1500.0),
     }
     for key, (minimum, maximum) in ranges.items():
         if key not in options or options[key] is None:
@@ -333,7 +336,8 @@ def _normalized_tts_options(options: dict[str, Any]) -> dict[str, float]:
             value = float(options[key])
         except (TypeError, ValueError):
             continue
-        normalized[key] = min(maximum, max(minimum, value))
+        clamped = min(maximum, max(minimum, value))
+        normalized[key] = round(clamped) if key in {"inference_timesteps", "max_chunk_chars"} else clamped
     return normalized
 
 

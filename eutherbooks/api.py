@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import wave
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -61,6 +62,9 @@ class CreateJobRequest(BaseModel):
     noise_scale: float | None = Field(default=None, examples=[0.667])
     noise_w: float | None = Field(default=None, examples=[0.8])
     sentence_silence: float | None = Field(default=None, examples=[0.2])
+    cfg_value: float | None = Field(default=None, ge=1.0, le=3.0, examples=[2.0])
+    inference_timesteps: int | None = Field(default=None, ge=1, le=50, examples=[10])
+    max_chunk_chars: int | None = Field(default=None, ge=120, le=1500, examples=[700])
     queue_remainder: bool = False
 
 
@@ -155,6 +159,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/voices", response_model=list[VoiceResponse])
     def list_voices() -> list[VoiceResponse]:
+        if backend.name == "eutherlink":
+            return _eutherlink_voices()
         return _local_piper_voices()
 
     @app.get("/books", response_model=list[BookResponse])
@@ -211,6 +217,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "noise_scale": request.noise_scale,
                     "noise_w": request.noise_w,
                     "sentence_silence": request.sentence_silence,
+                    "cfg_value": request.cfg_value,
+                    "inference_timesteps": request.inference_timesteps,
+                    "max_chunk_chars": request.max_chunk_chars,
                 },
                 queue_remainder=request.queue_remainder,
             )
@@ -231,11 +240,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Job not found")
         return JobResponse.from_job(job)
 
+    @app.get("/jobs/{job_id}/audio")
+    def get_job_audio(job_id: str, job_store: JobStore = Depends(get_store)) -> FileResponse:
+        job = job_store.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if not job.audio_files:
+            raise HTTPException(status_code=404, detail="Audio not found")
+        source_paths = [_resolve_audio_path(settings.audio_dir, audio_path) for audio_path in job.audio_files]
+        missing = [path for path in source_paths if not path.exists()]
+        if missing:
+            raise HTTPException(status_code=404, detail="Audio not found")
+        combined_path = settings.audio_dir / job.book_id / job.id / "combined.wav"
+        try:
+            _ensure_combined_wav(source_paths, combined_path)
+        except ValueError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return FileResponse(combined_path, media_type="audio/wav")
+
     @app.get("/audio/{audio_path:path}")
     def get_audio(audio_path: str) -> FileResponse:
-        path = (settings.audio_dir / audio_path).resolve()
-        if settings.audio_dir.resolve() not in path.parents:
-            raise HTTPException(status_code=400, detail="Invalid audio path")
+        path = _resolve_audio_path(settings.audio_dir, audio_path)
         if not path.exists():
             raise HTTPException(status_code=404, detail="Audio not found")
         return FileResponse(path, media_type="audio/wav")
@@ -244,6 +269,67 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 app = create_app()
+
+
+def _resolve_audio_path(audio_dir: Path, audio_path: str) -> Path:
+    root = audio_dir.resolve()
+    path = (audio_dir / audio_path).resolve()
+    if root not in path.parents:
+        raise HTTPException(status_code=400, detail="Invalid audio path")
+    return path
+
+
+def _ensure_combined_wav(source_paths: list[Path], combined_path: Path) -> None:
+    newest_source = max(path.stat().st_mtime_ns for path in source_paths)
+    if combined_path.exists() and combined_path.stat().st_mtime_ns >= newest_source:
+        return
+    combined_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = combined_path.with_name(f".{combined_path.name}.tmp")
+    first_params = None
+    with wave.open(str(temp_path), "wb") as output:
+        for source_path in source_paths:
+            with wave.open(str(source_path), "rb") as source:
+                params = source.getparams()
+                comparable = (params.nchannels, params.sampwidth, params.framerate, params.comptype, params.compname)
+                if first_params is None:
+                    first_params = comparable
+                    output.setparams(params)
+                elif comparable != first_params:
+                    raise ValueError("Audio parts use incompatible WAV formats")
+                while True:
+                    frames = source.readframes(8192)
+                    if not frames:
+                        break
+                    output.writeframesraw(frames)
+    temp_path.replace(combined_path)
+
+
+def _eutherlink_voices() -> list[VoiceResponse]:
+    presets = [
+        ("sv-female-warm", "Warm female narrator", "sv", "preset:sv-female-warm"),
+        ("sv-female-clear", "Clear female narrator", "sv", "preset:sv-female-clear"),
+        ("sv-female-soft", "Soft female narrator", "sv", "preset:sv-female-soft"),
+        ("sv-female-deep", "Deep female narrator", "sv", "preset:sv-female-deep"),
+        ("sv-female-elder", "Older female storyteller", "sv", "preset:sv-female-elder"),
+        ("sv-male-warm", "Warm male narrator", "sv", "preset:sv-male-warm"),
+        ("sv-male-clear", "Clear male narrator", "sv", "preset:sv-male-clear"),
+        ("sv-male-deep", "Deep male narrator", "sv", "preset:sv-male-deep"),
+        ("sv-male-soft", "Soft male narrator", "sv", "preset:sv-male-soft"),
+        ("sv-male-elder", "Older male storyteller", "sv", "preset:sv-male-elder"),
+        ("sv-neutral-calm", "Calm neutral narrator", "sv", "preset:sv-neutral-calm"),
+        ("sv-neutral-news", "Crisp documentary voice", "sv", "preset:sv-neutral-news"),
+        ("sv-neutral-theatre", "Expressive theatre narrator", "sv", "preset:sv-neutral-theatre"),
+        ("sv-whisper", "Quiet bedtime voice", "sv", "preset:sv-whisper"),
+        ("sv-character-bright", "Bright character voice", "sv", "preset:sv-character-bright"),
+        ("sv-character-gritty", "Gritty character voice", "sv", "preset:sv-character-gritty"),
+        ("en-female-warm", "English warm female", "en", "preset:en-female-warm"),
+        ("en-male-warm", "English warm male", "en", "preset:en-male-warm"),
+        ("custom", "Custom voice prompt", "sv", "preset:custom"),
+    ]
+    return [
+        VoiceResponse(id=voice_id, label=label, language=language, backend="eutherlink", path=path)
+        for voice_id, label, language, path in presets
+    ]
 
 
 def _local_piper_voices() -> list[VoiceResponse]:
