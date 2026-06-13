@@ -318,8 +318,8 @@ def _audio_file_word(count: int) -> str:
     return "audio file" if count == 1 else "audio files"
 
 
-def _normalized_tts_options(options: dict[str, Any]) -> dict[str, float]:
-    normalized: dict[str, float] = {}
+def _normalized_tts_options(options: dict[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
     ranges = {
         "length_scale": (0.65, 1.6),
         "noise_scale": (0.1, 1.2),
@@ -338,7 +338,30 @@ def _normalized_tts_options(options: dict[str, Any]) -> dict[str, float]:
             continue
         clamped = min(maximum, max(minimum, value))
         normalized[key] = round(clamped) if key in {"inference_timesteps", "max_chunk_chars"} else clamped
+    reference_path = _clean_reference_path(options.get("voice_reference_path"))
+    prompt_text = _clean_prompt_text(options.get("voice_prompt_text"))
+    if reference_path:
+        normalized["voice_reference_path"] = reference_path
+    if prompt_text:
+        normalized["voice_prompt_text"] = prompt_text
     return normalized
+
+
+def _clean_reference_path(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    value = value.strip()
+    if not value or len(value) > 600 or any(ord(ch) < 32 for ch in value):
+        return ""
+    if not value.endswith(".wav"):
+        return ""
+    return value
+
+
+def _clean_prompt_text(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return "".join(ch for ch in value.strip()[:500] if ch == "\t" or ord(ch) >= 32)
 
 
 def _split_for_tts(text: str, max_chars: int = DEFAULT_MAX_CHARS_PER_AUDIO_FILE) -> list[str]:

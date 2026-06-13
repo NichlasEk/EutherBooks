@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import subprocess
@@ -127,6 +128,15 @@ class EutherLinkBackend(TtsBackend):
             "inference_timesteps": int((options or {}).get("inference_timesteps") or os.environ.get("EUTHERBOOKS_EUTHERLINK_INFERENCE_TIMESTEPS", "10")),
             "max_chunk_chars": int((options or {}).get("max_chunk_chars") or os.environ.get("EUTHERBOOKS_EUTHERLINK_MAX_CHUNK_CHARS", "700")),
         }
+        reference_path = _valid_voice_reference_path((options or {}).get("voice_reference_path"))
+        prompt_text = _valid_voice_prompt_text((options or {}).get("voice_prompt_text"))
+        if voice in {"own-sv", "own-en"} and reference_path:
+            sample = Path(reference_path).read_bytes()
+            sample_base64 = base64.b64encode(sample).decode("ascii")
+            payload["prompt_wav_base64"] = sample_base64
+            payload["reference_wav_base64"] = sample_base64
+            if prompt_text:
+                payload["prompt_text"] = prompt_text
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         temp_output = _temporary_output_path(output_path)
@@ -151,6 +161,27 @@ class EutherLinkBackend(TtsBackend):
         finally:
             temp_output.unlink(missing_ok=True)
 
+
+def _valid_voice_reference_path(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    value = value.strip()
+    if not value or len(value) > 600 or not value.endswith(".wav"):
+        return ""
+    try:
+        path = Path(value).expanduser().resolve()
+    except OSError:
+        return ""
+    root = Path(os.environ.get("EUTHERBOOKS_VOICE_REFERENCE_ROOT", "/home/nichlas/EutherOxide/.euther-host/user-data")).resolve()
+    if root not in path.parents or not path.is_file():
+        return ""
+    return str(path)
+
+
+def _valid_voice_prompt_text(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return "".join(ch for ch in value.strip()[:500] if ch == "\t" or ord(ch) >= 32)
 
 def _temporary_output_path(output_path: Path) -> Path:
     return output_path.with_name(f".{output_path.name}.{os.getpid()}.tmp")

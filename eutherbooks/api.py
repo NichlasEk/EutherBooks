@@ -65,6 +65,8 @@ class CreateJobRequest(BaseModel):
     cfg_value: float | None = Field(default=None, ge=1.0, le=3.0, examples=[2.0])
     inference_timesteps: int | None = Field(default=None, ge=1, le=50, examples=[10])
     max_chunk_chars: int | None = Field(default=None, ge=120, le=1500, examples=[700])
+    voice_reference_path: str | None = Field(default=None, max_length=600)
+    voice_prompt_text: str | None = Field(default=None, max_length=500)
     queue_remainder: bool = False
 
 
@@ -220,6 +222,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "cfg_value": request.cfg_value,
                     "inference_timesteps": request.inference_timesteps,
                     "max_chunk_chars": request.max_chunk_chars,
+                    "voice_reference_path": request.voice_reference_path,
+                    "voice_prompt_text": request.voice_prompt_text,
                 },
                 queue_remainder=request.queue_remainder,
             )
@@ -324,6 +328,8 @@ def _eutherlink_voices() -> list[VoiceResponse]:
         ("sv-character-gritty", "Gritty character voice", "sv", "preset:sv-character-gritty"),
         ("en-female-warm", "English warm female", "en", "preset:en-female-warm"),
         ("en-male-warm", "English warm male", "en", "preset:en-male-warm"),
+        ("own-sv", "Your own voice SV", "sv", "user:own-sv"),
+        ("own-en", "Your own voice EN", "en", "user:own-en"),
         ("custom", "Custom voice prompt", "sv", "preset:custom"),
     ]
     return [
