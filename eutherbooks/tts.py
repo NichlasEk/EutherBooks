@@ -140,17 +140,22 @@ class EutherLinkBackend(TtsBackend):
             "max_chunk_chars": int((options or {}).get("max_chunk_chars") or os.environ.get("EUTHERBOOKS_EUTHERLINK_MAX_CHUNK_CHARS", "700")),
         }
         seed = (options or {}).get("seed")
-        if seed is not None and int(seed) > 0:
-            payload["seed"] = int(seed)
+        explicit_seed = _positive_seed(seed)
+        if explicit_seed is not None:
+            payload["seed"] = explicit_seed
         reference_path = _valid_voice_reference_path((options or {}).get("voice_reference_path"))
         prompt_text = _valid_voice_prompt_text((options or {}).get("voice_prompt_text"))
         sample_sha = ""
+        sample_seed: int | None = None
         sample_size = 0
         if voice in {"own-sv", "own-en"} and reference_path:
             sample_path = Path(reference_path)
             sample = sample_path.read_bytes()
             sample_sha = _short_sha256(sample)
+            sample_seed = _stable_voice_seed(sample)
             sample_size = len(sample)
+            if explicit_seed is None:
+                payload["seed"] = sample_seed
             sample_base64 = base64.b64encode(sample).decode("ascii")
             payload["reference_wav_base64"] = sample_base64
             if prompt_text and _use_eutherlink_prompt_transcript(prompt_text):
@@ -158,7 +163,7 @@ class EutherLinkBackend(TtsBackend):
                 payload["prompt_text"] = prompt_text
 
         LOGGER.warning(
-            "TTS_TRACE eutherbooks_submit voice=%s lang=%s output=%s text_len=%s text_sha=%s seed_payload=%s seed_option=%s reference_valid=%s reference_path=%s sample_size=%s sample_sha=%s prompt_text_len=%s prompt_text_sha=%s has_prompt_wav=%s has_reference_wav=%s cfg=%.3f steps=%s max_chunk_chars=%s",
+            "TTS_TRACE eutherbooks_submit voice=%s lang=%s output=%s text_len=%s text_sha=%s seed_payload=%s seed_option=%s seed_source=%s sample_seed=%s reference_valid=%s reference_path=%s sample_size=%s sample_sha=%s prompt_text_len=%s prompt_text_sha=%s has_prompt_wav=%s has_reference_wav=%s cfg=%.3f steps=%s max_chunk_chars=%s",
             voice,
             language,
             output_path,
@@ -166,6 +171,8 @@ class EutherLinkBackend(TtsBackend):
             _short_sha256(text.encode("utf-8")),
             payload.get("seed"),
             (options or {}).get("seed"),
+            "explicit" if explicit_seed is not None else ("sample" if sample_seed is not None else "none"),
+            sample_seed,
             bool(reference_path),
             reference_path,
             sample_size,
@@ -220,6 +227,19 @@ def _clamped_int(value: Any, minimum: int, maximum: int, fallback: int) -> int:
 
 def _short_sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()[:16]
+
+
+def _stable_voice_seed(data: bytes) -> int:
+    digest = hashlib.blake2s(data, digest_size=8).digest()
+    return int.from_bytes(digest, "big") & 0x7FFF_FFFF
+
+
+def _positive_seed(value: Any) -> int | None:
+    try:
+        parsed = int(float(value))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _valid_voice_reference_path(value: Any) -> str:
