@@ -306,6 +306,8 @@ def _eutherlink_voice_instruction(voice: str) -> str:
     )
     value = voice.strip()
     normalized = value.lower().replace("-", "_")
+    if normalized in {"own_sv", "own_en"}:
+        return ""
     presets = {
         "sv": "A warm, clear Swedish audiobook narrator with calm natural pacing.",
         "se": "A warm, clear Swedish audiobook narrator with calm natural pacing.",

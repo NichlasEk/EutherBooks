@@ -75,6 +75,7 @@ def test_eutherlink_own_voice_uses_reference_only_by_default(monkeypatch, tmp_pa
     )
 
     assert output.read_bytes() == b"wav"
+    assert captured["voice_instruction"] == ""
     assert "reference_wav_base64" in captured
     assert "prompt_wav_base64" not in captured
     assert "prompt_text" not in captured
@@ -102,6 +103,7 @@ def test_eutherlink_own_voice_can_send_prompt_transcript_when_enabled(monkeypatc
         {"voice_reference_path": str(sample), "voice_prompt_text": "Detta sade jag i samplet."},
     )
 
+    assert captured["voice_instruction"] == ""
     assert "reference_wav_base64" in captured
     assert "prompt_wav_base64" in captured
     assert captured["prompt_text"] == "Detta sade jag i samplet."
@@ -130,6 +132,7 @@ def test_eutherlink_own_voice_sends_builtin_reading_prompt_as_transcript(monkeyp
         {"voice_reference_path": str(sample), "voice_prompt_text": prompt},
     )
 
+    assert captured["voice_instruction"] == ""
     assert "reference_wav_base64" in captured
     assert "prompt_wav_base64" in captured
     assert captured["prompt_text"] == prompt
