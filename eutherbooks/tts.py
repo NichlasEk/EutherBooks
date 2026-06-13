@@ -134,6 +134,9 @@ class EutherLinkBackend(TtsBackend):
             ),
             "max_chunk_chars": int((options or {}).get("max_chunk_chars") or os.environ.get("EUTHERBOOKS_EUTHERLINK_MAX_CHUNK_CHARS", "700")),
         }
+        seed = (options or {}).get("seed")
+        if seed is not None and int(seed) > 0:
+            payload["seed"] = int(seed)
         reference_path = _valid_voice_reference_path((options or {}).get("voice_reference_path"))
         prompt_text = _valid_voice_prompt_text((options or {}).get("voice_prompt_text"))
         if voice in {"own-sv", "own-en"} and reference_path:

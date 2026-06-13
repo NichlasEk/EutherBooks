@@ -32,6 +32,10 @@ def test_tts_options_clamp_inference_steps_to_stable_minimum() -> None:
     assert _normalized_tts_options({"inference_timesteps": 1})["inference_timesteps"] == 10
 
 
+def test_tts_options_round_seed() -> None:
+    assert _normalized_tts_options({"seed": 123.4})["seed"] == 123
+
+
 def test_job_store_round_trips_jobs(tmp_path: Path) -> None:
     store = JobStore(tmp_path)
     job = TtsJob(

@@ -328,6 +328,7 @@ def _normalized_tts_options(options: dict[str, Any]) -> dict[str, Any]:
         "cfg_value": (1.0, 3.0),
         "inference_timesteps": (10.0, 50.0),
         "max_chunk_chars": (120.0, 1500.0),
+        "seed": (0.0, 2147483647.0),
     }
     for key, (minimum, maximum) in ranges.items():
         if key not in options or options[key] is None:
@@ -337,7 +338,7 @@ def _normalized_tts_options(options: dict[str, Any]) -> dict[str, Any]:
         except (TypeError, ValueError):
             continue
         clamped = min(maximum, max(minimum, value))
-        normalized[key] = round(clamped) if key in {"inference_timesteps", "max_chunk_chars"} else clamped
+        normalized[key] = round(clamped) if key in {"inference_timesteps", "max_chunk_chars", "seed"} else clamped
     reference_path = _clean_reference_path(options.get("voice_reference_path"))
     prompt_text = _clean_prompt_text(options.get("voice_prompt_text"))
     if reference_path:

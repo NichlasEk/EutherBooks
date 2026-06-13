@@ -71,12 +71,13 @@ def test_eutherlink_own_voice_uses_reference_only_by_default(monkeypatch, tmp_pa
         output,
         "sv",
         "own-sv",
-        {"voice_reference_path": str(sample), "voice_prompt_text": "not an exact transcript"},
+        {"voice_reference_path": str(sample), "voice_prompt_text": "not an exact transcript", "seed": 123456},
     )
 
     assert output.read_bytes() == b"wav"
     assert captured["voice_instruction"] == ""
     assert "reference_wav_base64" in captured
+    assert captured["seed"] == 123456
     assert "prompt_wav_base64" not in captured
     assert "prompt_text" not in captured
 

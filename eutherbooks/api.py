@@ -65,6 +65,7 @@ class CreateJobRequest(BaseModel):
     cfg_value: float | None = Field(default=None, ge=1.0, le=3.0, examples=[2.0])
     inference_timesteps: int | None = Field(default=None, ge=1, le=50, examples=[10])
     max_chunk_chars: int | None = Field(default=None, ge=120, le=1500, examples=[700])
+    seed: int | None = Field(default=None, ge=0, le=2147483647, examples=[123456])
     voice_reference_path: str | None = Field(default=None, max_length=600)
     voice_prompt_text: str | None = Field(default=None, max_length=500)
     queue_remainder: bool = False
