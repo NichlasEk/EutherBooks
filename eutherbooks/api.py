@@ -87,7 +87,7 @@ class JobResponse(BaseModel):
     chapter_indexes: list[int]
     audio_files: list[str]
     total_audio_files: int
-    tts_options: dict[str, float]
+    tts_options: dict[str, float | int | str | bool]
     queue_remainder: bool
     progress_label: str
     progress_detail: str
