@@ -156,3 +156,30 @@ def test_eutherlink_clamps_too_low_inference_steps(monkeypatch, tmp_path: Path) 
     )
 
     assert captured["inference_timesteps"] == 10
+
+def test_eutherlink_own_voice_accepts_eutheroxide_relative_reference_path(monkeypatch, tmp_path: Path) -> None:
+    eutheroxide_root = tmp_path / "EutherOxide"
+    sample_root = eutheroxide_root / ".euther-host" / "user-data"
+    sample = sample_root / "nichlas" / "eutherbooks" / "voices" / "own-sv.wav"
+    sample.parent.mkdir(parents=True)
+    sample.write_bytes(b"RIFF" + b"\0" * 4 + b"WAVE" + b"sample")
+    output = tmp_path / "out.wav"
+    captured: dict[str, object] = {}
+
+    monkeypatch.setenv("EUTHERBOOKS_EUTHEROXIDE_ROOT", str(eutheroxide_root))
+    monkeypatch.setenv("EUTHERBOOKS_VOICE_REFERENCE_ROOT", str(sample_root))
+    monkeypatch.setattr(tts, "_temporary_output_path", lambda path: tmp_path / ".out.tmp")
+    monkeypatch.setattr(tts, "_request_json", lambda url, payload, timeout: captured.update(payload or {}) or ({"status_url": "/status", "audio_url": "/audio", "status": "queued"} if payload is not None else {"status": "done", "audio_url": "/audio"}))
+    monkeypatch.setattr(tts, "_download_file", lambda url, output_path, timeout: output_path.write_bytes(b"wav"))
+
+    tts.EutherLinkBackend().synthesize(
+        "Hej",
+        output,
+        "sv",
+        "own-sv",
+        {"voice_reference_path": ".euther-host/user-data/nichlas/eutherbooks/voices/own-sv.wav"},
+    )
+
+    assert captured["voice_instruction"] == ""
+    assert "reference_wav_base64" in captured
+

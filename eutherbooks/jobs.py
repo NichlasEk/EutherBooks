@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import os
 import threading
 from dataclasses import asdict
@@ -13,6 +15,8 @@ from .library import Library
 from .models import Chapter, JobStatus, TtsJob
 from .tts import TtsBackend
 
+
+LOGGER = logging.getLogger("eutherbooks.jobs")
 
 DEFAULT_MAX_CHARS_PER_AUDIO_FILE = 4_000
 DEFAULT_PIPER_MAX_CHARS_PER_AUDIO_FILE = 900
@@ -189,6 +193,22 @@ class TtsQueue:
                             "Synthesizing speech",
                             f"{chapter.title}: part {chunk_index + 1}/{len(chunks)} ({len(audio_files) + 1}/{total_chunks})",
                         )
+                        LOGGER.warning(
+                            "TTS_TRACE eutherbooks_part job=%s book=%s chapter=%s chunk=%s/%s output=%s exists=%s voice=%s lang=%s seed=%s reference_path=%s text_len=%s text_sha=%s",
+                            job.id,
+                            job.book_id,
+                            chapter_index,
+                            chunk_index + 1,
+                            len(chunks),
+                            output_path,
+                            output_path.exists() and output_path.stat().st_size > 0,
+                            job.voice,
+                            job.language,
+                            job.tts_options.get("seed"),
+                            job.tts_options.get("voice_reference_path"),
+                            len(chunk),
+                            _short_sha256(chunk.encode("utf-8")),
+                        )
                         if not output_path.exists() or output_path.stat().st_size == 0:
                             self.backend.synthesize(chunk, output_path, job.language, job.voice, job.tts_options)
                         audio_files.append(relative.as_posix())
@@ -242,6 +262,22 @@ class TtsQueue:
                         "Synthesizing PDF speech",
                         f"Page {chapter.index + 1}, part {chunk_index + 1}/{len(chunks)}; {len(audio_files)}/{max(job.total_audio_files, len(audio_files) + 1)} ready.",
                     )
+                    LOGGER.warning(
+                        "TTS_TRACE eutherbooks_pdf_part job=%s book=%s page=%s chunk=%s/%s output=%s exists=%s voice=%s lang=%s seed=%s reference_path=%s text_len=%s text_sha=%s",
+                        job.id,
+                        job.book_id,
+                        chapter.index,
+                        chunk_index + 1,
+                        len(chunks),
+                        output_path,
+                        output_path.exists() and output_path.stat().st_size > 0,
+                        job.voice,
+                        job.language,
+                        job.tts_options.get("seed"),
+                        job.tts_options.get("voice_reference_path"),
+                        len(chunk),
+                        _short_sha256(chunk.encode("utf-8")),
+                    )
                     if not output_path.exists() or output_path.stat().st_size == 0:
                         self.backend.synthesize(chunk, output_path, job.language, job.voice, job.tts_options)
                     if relative_posix not in seen_audio:
@@ -273,6 +309,10 @@ class TtsQueue:
         job.progress_label = label
         job.progress_detail = detail
         self.store.put(job)
+
+
+def _short_sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()[:16]
 
 
 def _max_chars_for_backend(backend_name: str) -> int:

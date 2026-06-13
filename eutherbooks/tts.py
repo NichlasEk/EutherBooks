@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import logging
 import os
 import subprocess
 import tempfile
@@ -11,6 +13,9 @@ import urllib.request
 from pathlib import Path
 from shutil import which
 from typing import Any
+
+
+LOGGER = logging.getLogger("eutherbooks.tts")
 
 
 class TtsError(RuntimeError):
@@ -139,18 +144,46 @@ class EutherLinkBackend(TtsBackend):
             payload["seed"] = int(seed)
         reference_path = _valid_voice_reference_path((options or {}).get("voice_reference_path"))
         prompt_text = _valid_voice_prompt_text((options or {}).get("voice_prompt_text"))
+        sample_sha = ""
+        sample_size = 0
         if voice in {"own-sv", "own-en"} and reference_path:
-            sample = Path(reference_path).read_bytes()
+            sample_path = Path(reference_path)
+            sample = sample_path.read_bytes()
+            sample_sha = _short_sha256(sample)
+            sample_size = len(sample)
             sample_base64 = base64.b64encode(sample).decode("ascii")
             payload["reference_wav_base64"] = sample_base64
             if prompt_text and _use_eutherlink_prompt_transcript(prompt_text):
                 payload["prompt_wav_base64"] = sample_base64
                 payload["prompt_text"] = prompt_text
 
+        LOGGER.warning(
+            "TTS_TRACE eutherbooks_submit voice=%s lang=%s output=%s text_len=%s text_sha=%s seed_payload=%s seed_option=%s reference_valid=%s reference_path=%s sample_size=%s sample_sha=%s prompt_text_len=%s prompt_text_sha=%s has_prompt_wav=%s has_reference_wav=%s cfg=%.3f steps=%s max_chunk_chars=%s",
+            voice,
+            language,
+            output_path,
+            len(text),
+            _short_sha256(text.encode("utf-8")),
+            payload.get("seed"),
+            (options or {}).get("seed"),
+            bool(reference_path),
+            reference_path,
+            sample_size,
+            sample_sha,
+            len(prompt_text),
+            _short_sha256(prompt_text.encode("utf-8")),
+            "prompt_wav_base64" in payload,
+            "reference_wav_base64" in payload,
+            float(payload["cfg_value"]),
+            payload["inference_timesteps"],
+            payload["max_chunk_chars"],
+        )
+
         output_path.parent.mkdir(parents=True, exist_ok=True)
         temp_output = _temporary_output_path(output_path)
         try:
             job = _request_json(f"{base_url}/v1/tts/jobs", payload, timeout)
+            LOGGER.warning("TTS_TRACE eutherbooks_worker_accepted output=%s worker_job=%s", output_path, job.get("id"))
             status_url = _absolute_worker_url(base_url, str(job["status_url"]))
 
             deadline = time.monotonic() + float(os.environ.get("EUTHERBOOKS_EUTHERLINK_JOB_TIMEOUT", "1800"))
@@ -166,6 +199,12 @@ class EutherLinkBackend(TtsBackend):
 
             audio_url = _absolute_worker_url(base_url, str(status.get("audio_url") or job["audio_url"]))
             _download_file(audio_url, temp_output, timeout)
+            LOGGER.warning(
+                "TTS_TRACE eutherbooks_download output=%s worker_job=%s bytes=%s",
+                output_path,
+                job.get("id"),
+                temp_output.stat().st_size if temp_output.exists() else 0,
+            )
             os.replace(temp_output, output_path)
         finally:
             temp_output.unlink(missing_ok=True)
@@ -179,20 +218,30 @@ def _clamped_int(value: Any, minimum: int, maximum: int, fallback: int) -> int:
     return min(maximum, max(minimum, parsed))
 
 
+def _short_sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()[:16]
+
+
 def _valid_voice_reference_path(value: Any) -> str:
     if not isinstance(value, str):
         return ""
     value = value.strip()
     if not value or len(value) > 600 or not value.endswith(".wav"):
         return ""
-    try:
-        path = Path(value).expanduser().resolve()
-    except OSError:
-        return ""
     root = Path(os.environ.get("EUTHERBOOKS_VOICE_REFERENCE_ROOT", "/home/nichlas/EutherOxide/.euther-host/user-data")).resolve()
-    if root not in path.parents or not path.is_file():
-        return ""
-    return str(path)
+    requested = Path(value).expanduser()
+    candidates = [requested]
+    if not requested.is_absolute():
+        eutheroxide_root = Path(os.environ.get("EUTHERBOOKS_EUTHEROXIDE_ROOT", "/home/nichlas/EutherOxide"))
+        candidates.append(eutheroxide_root / requested)
+    for candidate in candidates:
+        try:
+            path = candidate.resolve()
+        except OSError:
+            continue
+        if (path == root or root in path.parents) and path.is_file():
+            return str(path)
+    return ""
 
 
 def _valid_voice_prompt_text(value: Any) -> str:
