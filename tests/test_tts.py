@@ -40,3 +40,68 @@ def test_piper_model_path_allows_env_override(monkeypatch, tmp_path: Path) -> No
     monkeypatch.setenv("EUTHERBOOKS_PIPER_VOICE_EN", str(model))
 
     assert tts._piper_model_path("en", "en") == model
+
+
+def test_eutherlink_own_voice_uses_reference_only_by_default(monkeypatch, tmp_path: Path) -> None:
+    sample_root = tmp_path / "user-data"
+    sample = sample_root / "nichlas" / "eutherbooks" / "voices" / "own-sv.wav"
+    sample.parent.mkdir(parents=True)
+    sample.write_bytes(b"RIFF" + b"\0" * 4 + b"WAVE" + b"sample")
+    output = tmp_path / "out.wav"
+    captured: dict[str, object] = {}
+
+    monkeypatch.setenv("EUTHERBOOKS_VOICE_REFERENCE_ROOT", str(sample_root))
+    monkeypatch.delenv("EUTHERBOOKS_EUTHERLINK_USE_PROMPT_TRANSCRIPT", raising=False)
+    monkeypatch.setattr(tts, "_temporary_output_path", lambda path: tmp_path / ".out.tmp")
+
+    def fake_request_json(url, payload, timeout):
+        if payload is not None:
+            captured.update(payload)
+            return {"status_url": "/status", "audio_url": "/audio", "status": "queued"}
+        return {"status": "done", "audio_url": "/audio"}
+
+    def fake_download_file(url, output_path, timeout):
+        output_path.write_bytes(b"wav")
+
+    monkeypatch.setattr(tts, "_request_json", fake_request_json)
+    monkeypatch.setattr(tts, "_download_file", fake_download_file)
+
+    tts.EutherLinkBackend().synthesize(
+        "Hej",
+        output,
+        "sv",
+        "own-sv",
+        {"voice_reference_path": str(sample), "voice_prompt_text": "not an exact transcript"},
+    )
+
+    assert output.read_bytes() == b"wav"
+    assert "reference_wav_base64" in captured
+    assert "prompt_wav_base64" not in captured
+    assert "prompt_text" not in captured
+
+
+def test_eutherlink_own_voice_can_send_prompt_transcript_when_enabled(monkeypatch, tmp_path: Path) -> None:
+    sample_root = tmp_path / "user-data"
+    sample = sample_root / "nichlas" / "eutherbooks" / "voices" / "own-sv.wav"
+    sample.parent.mkdir(parents=True)
+    sample.write_bytes(b"RIFF" + b"\0" * 4 + b"WAVE" + b"sample")
+    output = tmp_path / "out.wav"
+    captured: dict[str, object] = {}
+
+    monkeypatch.setenv("EUTHERBOOKS_VOICE_REFERENCE_ROOT", str(sample_root))
+    monkeypatch.setenv("EUTHERBOOKS_EUTHERLINK_USE_PROMPT_TRANSCRIPT", "true")
+    monkeypatch.setattr(tts, "_temporary_output_path", lambda path: tmp_path / ".out.tmp")
+    monkeypatch.setattr(tts, "_request_json", lambda url, payload, timeout: captured.update(payload or {}) or ({"status_url": "/status", "audio_url": "/audio", "status": "queued"} if payload is not None else {"status": "done", "audio_url": "/audio"}))
+    monkeypatch.setattr(tts, "_download_file", lambda url, output_path, timeout: output_path.write_bytes(b"wav"))
+
+    tts.EutherLinkBackend().synthesize(
+        "Hej",
+        output,
+        "sv",
+        "own-sv",
+        {"voice_reference_path": str(sample), "voice_prompt_text": "Detta sade jag i samplet."},
+    )
+
+    assert "reference_wav_base64" in captured
+    assert "prompt_wav_base64" in captured
+    assert captured["prompt_text"] == "Detta sade jag i samplet."

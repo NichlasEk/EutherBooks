@@ -133,9 +133,9 @@ class EutherLinkBackend(TtsBackend):
         if voice in {"own-sv", "own-en"} and reference_path:
             sample = Path(reference_path).read_bytes()
             sample_base64 = base64.b64encode(sample).decode("ascii")
-            payload["prompt_wav_base64"] = sample_base64
             payload["reference_wav_base64"] = sample_base64
-            if prompt_text:
+            if prompt_text and _use_eutherlink_prompt_transcript():
+                payload["prompt_wav_base64"] = sample_base64
                 payload["prompt_text"] = prompt_text
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -182,6 +182,11 @@ def _valid_voice_prompt_text(value: Any) -> str:
     if not isinstance(value, str):
         return ""
     return "".join(ch for ch in value.strip()[:500] if ch == "\t" or ord(ch) >= 32)
+
+def _use_eutherlink_prompt_transcript() -> bool:
+    value = os.environ.get("EUTHERBOOKS_EUTHERLINK_USE_PROMPT_TRANSCRIPT", "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
 
 def _temporary_output_path(output_path: Path) -> Path:
     return output_path.with_name(f".{output_path.name}.{os.getpid()}.tmp")
