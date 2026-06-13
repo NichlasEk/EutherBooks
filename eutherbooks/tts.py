@@ -125,7 +125,13 @@ class EutherLinkBackend(TtsBackend):
             "language": language,
             "output_format": "wav",
             "cfg_value": float((options or {}).get("cfg_value") or os.environ.get("EUTHERBOOKS_EUTHERLINK_CFG_VALUE", "2.0")),
-            "inference_timesteps": int((options or {}).get("inference_timesteps") or os.environ.get("EUTHERBOOKS_EUTHERLINK_INFERENCE_TIMESTEPS", "10")),
+            "inference_timesteps": _clamped_int(
+                (options or {}).get("inference_timesteps")
+                or os.environ.get("EUTHERBOOKS_EUTHERLINK_INFERENCE_TIMESTEPS", "10"),
+                10,
+                50,
+                10,
+            ),
             "max_chunk_chars": int((options or {}).get("max_chunk_chars") or os.environ.get("EUTHERBOOKS_EUTHERLINK_MAX_CHUNK_CHARS", "700")),
         }
         reference_path = _valid_voice_reference_path((options or {}).get("voice_reference_path"))
@@ -160,6 +166,14 @@ class EutherLinkBackend(TtsBackend):
             os.replace(temp_output, output_path)
         finally:
             temp_output.unlink(missing_ok=True)
+
+
+def _clamped_int(value: Any, minimum: int, maximum: int, fallback: int) -> int:
+    try:
+        parsed = int(float(value))
+    except (TypeError, ValueError):
+        parsed = fallback
+    return min(maximum, max(minimum, parsed))
 
 
 def _valid_voice_reference_path(value: Any) -> str:

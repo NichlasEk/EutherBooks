@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from eutherbooks.jobs import JobStore, TtsQueue, _max_chars_for_backend, _split_for_tts
+from eutherbooks.jobs import JobStore, TtsQueue, _max_chars_for_backend, _normalized_tts_options, _split_for_tts
 from eutherbooks.ids import stable_job_id
 from eutherbooks.library import Library
 from eutherbooks.models import JobStatus, TtsJob
@@ -26,6 +26,10 @@ class RecordingBackend(TtsBackend):
         self.calls += 1
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(text, encoding="utf-8")
+
+
+def test_tts_options_clamp_inference_steps_to_stable_minimum() -> None:
+    assert _normalized_tts_options({"inference_timesteps": 1})["inference_timesteps"] == 10
 
 
 def test_job_store_round_trips_jobs(tmp_path: Path) -> None:

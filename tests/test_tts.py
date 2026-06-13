@@ -133,3 +133,22 @@ def test_eutherlink_own_voice_sends_builtin_reading_prompt_as_transcript(monkeyp
     assert "reference_wav_base64" in captured
     assert "prompt_wav_base64" in captured
     assert captured["prompt_text"] == prompt
+
+
+def test_eutherlink_clamps_too_low_inference_steps(monkeypatch, tmp_path: Path) -> None:
+    output = tmp_path / "out.wav"
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(tts, "_temporary_output_path", lambda path: tmp_path / ".out.tmp")
+    monkeypatch.setattr(tts, "_request_json", lambda url, payload, timeout: captured.update(payload or {}) or ({"status_url": "/status", "audio_url": "/audio", "status": "queued"} if payload is not None else {"status": "done", "audio_url": "/audio"}))
+    monkeypatch.setattr(tts, "_download_file", lambda url, output_path, timeout: output_path.write_bytes(b"wav"))
+
+    tts.EutherLinkBackend().synthesize(
+        "Hej",
+        output,
+        "sv",
+        "sv-female",
+        {"inference_timesteps": 1},
+    )
+
+    assert captured["inference_timesteps"] == 10
