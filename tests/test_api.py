@@ -19,3 +19,16 @@ def test_upload_book_endpoint_uses_name_query_param() -> None:
     route = next(route for route in app.routes if isinstance(route, APIRoute) and route.path == "/books/upload")
 
     assert [param.name for param in route.dependant.query_params] == ["name"]
+
+
+
+def test_eutherlink_voices_include_matching_english_presets() -> None:
+    app = create_app()
+    voices = next(route.endpoint for route in app.routes if isinstance(route, APIRoute) and route.path == "/voices")()
+
+    sv_presets = [voice for voice in voices if voice.path.startswith("preset:sv-")]
+    en_presets = [voice for voice in voices if voice.path.startswith("preset:en-")]
+
+    assert len(en_presets) == len(sv_presets)
+    assert all(voice.default_seed for voice in sv_presets + en_presets)
+    assert all(voice.default_length_scale for voice in sv_presets + en_presets)

@@ -208,6 +208,44 @@ def test_eutherlink_own_voice_zero_seed_uses_sample_seed(monkeypatch, tmp_path: 
     assert captured["seed"] == tts._stable_voice_seed(sample_bytes)
     assert "reference_wav_base64" in captured
 
+
+def test_eutherlink_preset_auto_seed_is_stable(monkeypatch, tmp_path: Path) -> None:
+    output = tmp_path / "out.wav"
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(tts, "_temporary_output_path", lambda path: tmp_path / ".out.tmp")
+    monkeypatch.setattr(tts, "_request_json", lambda url, payload, timeout: captured.update(payload or {}) or ({"status_url": "/status", "audio_url": "/audio", "status": "queued"} if payload is not None else {"status": "done", "audio_url": "/audio"}))
+    monkeypatch.setattr(tts, "_download_file", lambda url, output_path, timeout: output_path.write_bytes(b"wav"))
+
+    tts.EutherLinkBackend().synthesize(
+        "Hej",
+        output,
+        "sv",
+        "sv-male-warm",
+        {"seed": 0},
+    )
+
+    assert captured["seed"] == tts._eutherlink_stable_preset_seed("sv-male-warm")
+
+
+def test_eutherlink_explicit_preset_seed_wins(monkeypatch, tmp_path: Path) -> None:
+    output = tmp_path / "out.wav"
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(tts, "_temporary_output_path", lambda path: tmp_path / ".out.tmp")
+    monkeypatch.setattr(tts, "_request_json", lambda url, payload, timeout: captured.update(payload or {}) or ({"status_url": "/status", "audio_url": "/audio", "status": "queued"} if payload is not None else {"status": "done", "audio_url": "/audio"}))
+    monkeypatch.setattr(tts, "_download_file", lambda url, output_path, timeout: output_path.write_bytes(b"wav"))
+
+    tts.EutherLinkBackend().synthesize(
+        "Hej",
+        output,
+        "sv",
+        "sv-male-warm",
+        {"seed": 777},
+    )
+
+    assert captured["seed"] == 777
+
 def test_eutherlink_applies_length_scale_tempo(monkeypatch, tmp_path: Path) -> None:
     output = tmp_path / "out.wav"
     tempo_calls: list[tuple[Path, float]] = []

@@ -141,8 +141,11 @@ class EutherLinkBackend(TtsBackend):
         }
         seed = (options or {}).get("seed")
         explicit_seed = _positive_seed(seed)
+        preset_seed = _eutherlink_stable_preset_seed(voice)
         if explicit_seed is not None:
             payload["seed"] = explicit_seed
+        elif preset_seed is not None:
+            payload["seed"] = preset_seed
         reference_path = _valid_voice_reference_path((options or {}).get("voice_reference_path"))
         prompt_text = _valid_voice_prompt_text((options or {}).get("voice_prompt_text"))
         sample_sha = ""
@@ -171,7 +174,7 @@ class EutherLinkBackend(TtsBackend):
             _short_sha256(text.encode("utf-8")),
             payload.get("seed"),
             (options or {}).get("seed"),
-            "explicit" if explicit_seed is not None else ("sample" if sample_seed is not None else "none"),
+            "explicit" if explicit_seed is not None else ("sample" if sample_seed is not None else ("preset" if preset_seed is not None else "none")),
             sample_seed,
             bool(reference_path),
             reference_path,
@@ -420,8 +423,17 @@ def backend_from_name(name: str) -> TtsBackend:
     raise TtsError(f"Unknown TTS backend: {name}")
 
 
+def _eutherlink_stable_preset_seed(voice: str) -> int | None:
+    value = voice.strip()
+    normalized = value.lower().replace("-", "_")
+    if not value or normalized in {"own_sv", "own_en"}:
+        return None
+    material = f"eutherbooks:eutherlink:{normalized}".encode("utf-8")
+    return int.from_bytes(hashlib.sha256(material).digest()[:4], "big") & 0x7FFFFFFF
+
+
 def _eutherlink_voice_instruction(voice: str) -> str:
-    base = "Use the exact same speaker identity, timbre, accent, age, and performance style for every paragraph and every generated chunk. Do not switch voices between sentences, paragraphs, or chapter parts."
+    base = "Keep one speaker identity for the whole chapter: same timbre, accent, age, energy, prosody, and pacing in every paragraph and every generated chunk. Never switch speaker, gender, dialect, or performance style between chunks."
     configured = os.environ.get(
         "EUTHERBOOKS_EUTHERLINK_VOICE_INSTRUCTION",
         os.environ.get(
@@ -434,41 +446,59 @@ def _eutherlink_voice_instruction(voice: str) -> str:
     if normalized in {"own_sv", "own_en"}:
         return ""
     presets = {
-        "sv": "A warm, clear Swedish audiobook narrator with calm natural pacing.",
-        "se": "A warm, clear Swedish audiobook narrator with calm natural pacing.",
-        "sv_female": "A warm adult female Swedish audiobook narrator with clear pronunciation, calm pacing, and natural emotional nuance.",
-        "female": "A warm adult female Swedish audiobook narrator with clear pronunciation, calm pacing, and natural emotional nuance.",
-        "sv_female_warm": "A warm adult female Swedish audiobook narrator, close and friendly, with clear pronunciation and relaxed pacing.",
-        "sv_female_clear": "A precise adult female Swedish narrator with bright clarity, careful consonants, and steady audiobook pacing.",
-        "sv_female_soft": "A soft adult female Swedish bedtime storyteller with gentle tone, low intensity, and smooth phrasing.",
-        "sv_female_deep": "A lower-pitched adult female Swedish narrator with rich timbre, calm confidence, and measured pacing.",
+        "sv": "A warm, clear Swedish audiobook narrator with calm natural pacing, measured tempo, and consistent Swedish pronunciation.",
+        "se": "A warm, clear Swedish audiobook narrator with calm natural pacing, measured tempo, and consistent Swedish pronunciation.",
+        "sv_female": "A warm adult female Swedish audiobook narrator with clear pronunciation, measured calm pacing, and natural emotional nuance.",
+        "female": "A warm adult female Swedish audiobook narrator with clear pronunciation, measured calm pacing, and natural emotional nuance.",
+        "sv_female_warm": "A warm adult female Swedish audiobook narrator, close and friendly, with relaxed pacing and consistent Stockholm-neutral Swedish pronunciation.",
+        "sv_female_clear": "A precise adult female Swedish narrator with bright clarity, careful consonants, steady measured pacing, and consistent Swedish accent.",
+        "sv_female_soft": "A soft adult female Swedish bedtime storyteller with gentle tone, low intensity, slow relaxed pacing, and smooth phrasing.",
+        "sv_female_deep": "A lower-pitched adult female Swedish narrator with rich timbre, calm confidence, and slow measured pacing.",
         "sv_female_elder": "An older female Swedish storyteller with warm character, lived-in tone, clear diction, and unhurried pacing.",
-        "sv_male": "A warm adult male Swedish audiobook narrator with clear pronunciation, calm pacing, and natural emotional nuance.",
-        "male": "A warm adult male Swedish audiobook narrator with clear pronunciation, calm pacing, and natural emotional nuance.",
-        "sv_male_warm": "A warm adult male Swedish audiobook narrator, close and friendly, with clear pronunciation and relaxed pacing.",
-        "sv_male_clear": "A precise adult male Swedish narrator with clean diction, crisp consonants, and steady audiobook pacing.",
+        "sv_male": "A warm adult male Swedish audiobook narrator with clear pronunciation, measured calm pacing, and natural emotional nuance.",
+        "male": "A warm adult male Swedish audiobook narrator with clear pronunciation, measured calm pacing, and natural emotional nuance.",
+        "sv_male_warm": "A warm adult male Swedish audiobook narrator, close and friendly, with relaxed pacing and consistent Stockholm-neutral Swedish pronunciation.",
+        "sv_male_clear": "A precise adult male Swedish narrator with clean diction, crisp consonants, steady measured pacing, and consistent Swedish accent.",
         "sv_male_deep": "A deep adult male Swedish narrator with resonant timbre, calm authority, and slow measured pacing.",
-        "sv_male_soft": "A soft adult male Swedish storyteller with gentle tone, low intensity, and smooth phrasing.",
+        "sv_male_soft": "A soft adult male Swedish storyteller with gentle tone, low intensity, slow relaxed pacing, and smooth phrasing.",
         "sv_male_elder": "An older male Swedish storyteller with warm character, weathered timbre, clear diction, and unhurried pacing.",
-        "sv_neutral": "A calm neutral Swedish audiobook narrator with clear pronunciation and steady natural pacing.",
-        "neutral": "A calm neutral Swedish audiobook narrator with clear pronunciation and steady natural pacing.",
-        "sv_neutral_calm": "A calm neutral Swedish audiobook narrator with balanced tone, clean pronunciation, and steady pacing.",
-        "sv_neutral_news": "A crisp Swedish documentary narrator with neutral delivery, high intelligibility, and controlled pacing.",
-        "sv_neutral_theatre": "An expressive Swedish theatre narrator with controlled drama, clear diction, and consistent audiobook pacing.",
-        "sv_whisper": "A quiet Swedish bedtime narrator with intimate near-whisper softness while staying clearly understandable.",
-        "sv_character_bright": "A bright lively Swedish character narrator with energetic warmth, clear diction, and consistent playful tone.",
-        "sv_character_gritty": "A gritty Swedish character narrator with rougher texture, lower intensity, clear diction, and consistent tone.",
-        "en_female_warm": "A warm adult female English audiobook narrator with clear pronunciation, calm pacing, and natural emotional nuance.",
-        "en_male_warm": "A warm adult male English audiobook narrator with clear pronunciation, calm pacing, and natural emotional nuance.",
+        "sv_neutral": "A calm neutral Swedish audiobook narrator with clear pronunciation, steady measured pacing, and stable tone.",
+        "neutral": "A calm neutral Swedish audiobook narrator with clear pronunciation, steady measured pacing, and stable tone.",
+        "sv_neutral_calm": "A calm neutral Swedish audiobook narrator with balanced tone, clean pronunciation, and steady measured pacing.",
+        "sv_neutral_news": "A crisp Swedish documentary narrator with neutral delivery, high intelligibility, controlled pacing, and stable accent.",
+        "sv_neutral_theatre": "An expressive Swedish theatre narrator with controlled drama, clear diction, consistent voice identity, and audiobook pacing.",
+        "sv_whisper": "A quiet Swedish bedtime narrator with intimate near-whisper softness, slow pacing, and clear understandability.",
+        "sv_character_bright": "A bright lively Swedish character narrator with energetic warmth, clear diction, playful tone, and consistent voice identity.",
+        "sv_character_gritty": "A gritty Swedish character narrator with rougher texture, lower intensity, clear diction, measured pacing, and consistent tone.",
+        "en": "A warm, clear English audiobook narrator with calm measured pacing and consistent General American pronunciation.",
+        "en_us": "A warm, clear English audiobook narrator with calm measured pacing and consistent General American pronunciation.",
+        "en_female": "A warm adult female English audiobook narrator with clear pronunciation, measured calm pacing, and natural emotional nuance.",
+        "en_female_warm": "A warm adult female English audiobook narrator, close and friendly, with relaxed pacing and consistent General American pronunciation.",
+        "en_female_clear": "A precise adult female English narrator with bright clarity, careful consonants, steady measured pacing, and consistent accent.",
+        "en_female_soft": "A soft adult female English bedtime storyteller with gentle tone, low intensity, slow relaxed pacing, and smooth phrasing.",
+        "en_female_deep": "A lower-pitched adult female English narrator with rich timbre, calm confidence, and slow measured pacing.",
+        "en_female_elder": "An older female English storyteller with warm character, lived-in tone, clear diction, and unhurried pacing.",
+        "en_male": "A warm adult male English audiobook narrator with clear pronunciation, measured calm pacing, and natural emotional nuance.",
+        "en_male_warm": "A warm adult male English audiobook narrator, close and friendly, with relaxed pacing and consistent General American pronunciation.",
+        "en_male_clear": "A precise adult male English narrator with clean diction, crisp consonants, steady measured pacing, and consistent accent.",
+        "en_male_deep": "A deep adult male English narrator with resonant timbre, calm authority, and slow measured pacing.",
+        "en_male_soft": "A soft adult male English storyteller with gentle tone, low intensity, slow relaxed pacing, and smooth phrasing.",
+        "en_male_elder": "An older male English storyteller with warm character, weathered timbre, clear diction, and unhurried pacing.",
+        "en_neutral": "A calm neutral English audiobook narrator with clear pronunciation, steady measured pacing, and stable tone.",
+        "en_neutral_calm": "A calm neutral English audiobook narrator with balanced tone, clean pronunciation, and steady measured pacing.",
+        "en_neutral_news": "A crisp English documentary narrator with neutral delivery, high intelligibility, controlled pacing, and stable accent.",
+        "en_neutral_theatre": "An expressive English theatre narrator with controlled drama, clear diction, consistent voice identity, and audiobook pacing.",
+        "en_whisper": "A quiet English bedtime narrator with intimate near-whisper softness, slow pacing, and clear understandability.",
+        "en_character_bright": "A bright lively English character narrator with energetic warmth, clear diction, playful tone, and consistent voice identity.",
+        "en_character_gritty": "A gritty English character narrator with rougher texture, lower intensity, clear diction, measured pacing, and consistent tone.",
     }
     if normalized in presets:
         return f"{presets[normalized]} {base}"
-    if not value or normalized in {"sv_se", "sv_se_nst", "en", "en_us", "en_us_lessac", "custom"}:
+    if not value or normalized in {"sv_se", "sv_se_nst", "en_us_lessac", "custom"}:
         return f"{configured} {base}"
     if value.endswith(".onnx") or "/" in value:
         return f"{configured} {base}"
     return f"{value} {base}"
-
 
 def _request_json(url: str, payload: dict[str, Any] | None, timeout: float) -> dict[str, Any]:
     data = None if payload is None else json.dumps(payload).encode("utf-8")

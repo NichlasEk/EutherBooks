@@ -77,6 +77,8 @@ class VoiceResponse(BaseModel):
     language: str
     backend: str
     path: str
+    default_length_scale: float | None = None
+    default_seed: int | None = None
 
 
 class JobResponse(BaseModel):
@@ -223,6 +225,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "cfg_value": request.cfg_value,
                     "inference_timesteps": request.inference_timesteps,
                     "max_chunk_chars": request.max_chunk_chars,
+                    "seed": request.seed,
                     "voice_reference_path": request.voice_reference_path,
                     "voice_prompt_text": request.voice_prompt_text,
                 },
@@ -311,32 +314,59 @@ def _ensure_combined_wav(source_paths: list[Path], combined_path: Path) -> None:
 
 def _eutherlink_voices() -> list[VoiceResponse]:
     presets = [
-        ("sv-female-warm", "Warm female narrator", "sv", "preset:sv-female-warm"),
-        ("sv-female-clear", "Clear female narrator", "sv", "preset:sv-female-clear"),
-        ("sv-female-soft", "Soft female narrator", "sv", "preset:sv-female-soft"),
-        ("sv-female-deep", "Deep female narrator", "sv", "preset:sv-female-deep"),
-        ("sv-female-elder", "Older female storyteller", "sv", "preset:sv-female-elder"),
-        ("sv-male-warm", "Warm male narrator", "sv", "preset:sv-male-warm"),
-        ("sv-male-clear", "Clear male narrator", "sv", "preset:sv-male-clear"),
-        ("sv-male-deep", "Deep male narrator", "sv", "preset:sv-male-deep"),
-        ("sv-male-soft", "Soft male narrator", "sv", "preset:sv-male-soft"),
-        ("sv-male-elder", "Older male storyteller", "sv", "preset:sv-male-elder"),
-        ("sv-neutral-calm", "Calm neutral narrator", "sv", "preset:sv-neutral-calm"),
-        ("sv-neutral-news", "Crisp documentary voice", "sv", "preset:sv-neutral-news"),
-        ("sv-neutral-theatre", "Expressive theatre narrator", "sv", "preset:sv-neutral-theatre"),
-        ("sv-whisper", "Quiet bedtime voice", "sv", "preset:sv-whisper"),
-        ("sv-character-bright", "Bright character voice", "sv", "preset:sv-character-bright"),
-        ("sv-character-gritty", "Gritty character voice", "sv", "preset:sv-character-gritty"),
-        ("en-female-warm", "English warm female", "en", "preset:en-female-warm"),
-        ("en-male-warm", "English warm male", "en", "preset:en-male-warm"),
-        ("own-sv", "Your own voice SV", "sv", "user:own-sv"),
-        ("own-en", "Your own voice EN", "en", "user:own-en"),
-        ("custom", "Custom voice prompt", "sv", "preset:custom"),
+        ("sv-female-warm", "Warm female narrator", "sv", "preset:sv-female-warm", 1.15),
+        ("sv-female-clear", "Clear female narrator", "sv", "preset:sv-female-clear", 1.12),
+        ("sv-female-soft", "Soft female narrator", "sv", "preset:sv-female-soft", 1.20),
+        ("sv-female-deep", "Deep female narrator", "sv", "preset:sv-female-deep", 1.20),
+        ("sv-female-elder", "Older female storyteller", "sv", "preset:sv-female-elder", 1.25),
+        ("sv-male-warm", "Warm male narrator", "sv", "preset:sv-male-warm", 1.15),
+        ("sv-male-clear", "Clear male narrator", "sv", "preset:sv-male-clear", 1.12),
+        ("sv-male-deep", "Deep male narrator", "sv", "preset:sv-male-deep", 1.22),
+        ("sv-male-soft", "Soft male narrator", "sv", "preset:sv-male-soft", 1.20),
+        ("sv-male-elder", "Older male storyteller", "sv", "preset:sv-male-elder", 1.25),
+        ("sv-neutral-calm", "Calm neutral narrator", "sv", "preset:sv-neutral-calm", 1.16),
+        ("sv-neutral-news", "Crisp documentary voice", "sv", "preset:sv-neutral-news", 1.10),
+        ("sv-neutral-theatre", "Expressive theatre narrator", "sv", "preset:sv-neutral-theatre", 1.14),
+        ("sv-whisper", "Quiet bedtime voice", "sv", "preset:sv-whisper", 1.25),
+        ("sv-character-bright", "Bright character voice", "sv", "preset:sv-character-bright", 1.08),
+        ("sv-character-gritty", "Gritty character voice", "sv", "preset:sv-character-gritty", 1.18),
+        ("en-female-warm", "English warm female narrator", "en", "preset:en-female-warm", 1.15),
+        ("en-female-clear", "English clear female narrator", "en", "preset:en-female-clear", 1.12),
+        ("en-female-soft", "English soft female narrator", "en", "preset:en-female-soft", 1.20),
+        ("en-female-deep", "English deep female narrator", "en", "preset:en-female-deep", 1.20),
+        ("en-female-elder", "English older female storyteller", "en", "preset:en-female-elder", 1.25),
+        ("en-male-warm", "English warm male narrator", "en", "preset:en-male-warm", 1.15),
+        ("en-male-clear", "English clear male narrator", "en", "preset:en-male-clear", 1.12),
+        ("en-male-deep", "English deep male narrator", "en", "preset:en-male-deep", 1.22),
+        ("en-male-soft", "English soft male narrator", "en", "preset:en-male-soft", 1.20),
+        ("en-male-elder", "English older male storyteller", "en", "preset:en-male-elder", 1.25),
+        ("en-neutral-calm", "English calm neutral narrator", "en", "preset:en-neutral-calm", 1.16),
+        ("en-neutral-news", "English crisp documentary voice", "en", "preset:en-neutral-news", 1.10),
+        ("en-neutral-theatre", "English expressive theatre narrator", "en", "preset:en-neutral-theatre", 1.14),
+        ("en-whisper", "English quiet bedtime voice", "en", "preset:en-whisper", 1.25),
+        ("en-character-bright", "English bright character voice", "en", "preset:en-character-bright", 1.08),
+        ("en-character-gritty", "English gritty character voice", "en", "preset:en-character-gritty", 1.18),
+        ("own-sv", "Your own voice SV", "sv", "user:own-sv", None),
+        ("own-en", "Your own voice EN", "en", "user:own-en", None),
+        ("custom", "Custom voice prompt", "sv", "preset:custom", None),
     ]
     return [
-        VoiceResponse(id=voice_id, label=label, language=language, backend="eutherlink", path=path)
-        for voice_id, label, language, path in presets
+        VoiceResponse(
+            id=voice_id,
+            label=label,
+            language=language,
+            backend="eutherlink",
+            path=path,
+            default_length_scale=length_scale,
+            default_seed=_default_voice_seed(voice_id) if path.startswith("preset:") and voice_id != "custom" else None,
+        )
+        for voice_id, label, language, path, length_scale in presets
     ]
+
+
+def _default_voice_seed(voice_id: str) -> int:
+    digest = __import__("hashlib").sha256(f"eutherbooks:eutherlink:{voice_id}".encode("utf-8")).digest()
+    return int.from_bytes(digest[:4], "big") & 0x7FFFFFFF
 
 
 def _local_piper_voices() -> list[VoiceResponse]:
