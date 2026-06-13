@@ -208,3 +208,44 @@ def test_eutherlink_own_voice_zero_seed_uses_sample_seed(monkeypatch, tmp_path: 
     assert captured["seed"] == tts._stable_voice_seed(sample_bytes)
     assert "reference_wav_base64" in captured
 
+def test_eutherlink_applies_length_scale_tempo(monkeypatch, tmp_path: Path) -> None:
+    output = tmp_path / "out.wav"
+    tempo_calls: list[tuple[Path, float]] = []
+
+    monkeypatch.setattr(tts, "_temporary_output_path", lambda path: tmp_path / ".out.tmp")
+    monkeypatch.setattr(tts, "_request_json", lambda url, payload, timeout: {"status_url": "/status", "audio_url": "/audio", "status": "queued"} if payload is not None else {"status": "done", "audio_url": "/audio"})
+    monkeypatch.setattr(tts, "_download_file", lambda url, output_path, timeout: output_path.write_bytes(b"wav"))
+    monkeypatch.setattr(tts, "_apply_eutherlink_length_scale", lambda path, length_scale: tempo_calls.append((path, length_scale)))
+
+    tts.EutherLinkBackend().synthesize(
+        "Hej",
+        output,
+        "sv",
+        "sv-female",
+        {"length_scale": 1.35},
+    )
+
+    assert output.read_bytes() == b"wav"
+    assert tempo_calls == [(tmp_path / ".out.tmp", 1.35)]
+
+
+def test_eutherlink_length_scale_one_skips_tempo(monkeypatch, tmp_path: Path) -> None:
+    output = tmp_path / "out.wav"
+    tempo_calls: list[tuple[Path, float]] = []
+
+    monkeypatch.setattr(tts, "_temporary_output_path", lambda path: tmp_path / ".out.tmp")
+    monkeypatch.setattr(tts, "_request_json", lambda url, payload, timeout: {"status_url": "/status", "audio_url": "/audio", "status": "queued"} if payload is not None else {"status": "done", "audio_url": "/audio"})
+    monkeypatch.setattr(tts, "_download_file", lambda url, output_path, timeout: output_path.write_bytes(b"wav"))
+    monkeypatch.setattr(tts, "_apply_eutherlink_length_scale", lambda path, length_scale: tempo_calls.append((path, length_scale)))
+
+    tts.EutherLinkBackend().synthesize(
+        "Hej",
+        output,
+        "sv",
+        "sv-female",
+        {"length_scale": 1.0},
+    )
+
+    assert output.read_bytes() == b"wav"
+    assert tempo_calls == []
+

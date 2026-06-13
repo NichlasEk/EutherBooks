@@ -212,6 +212,17 @@ class EutherLinkBackend(TtsBackend):
                 job.get("id"),
                 temp_output.stat().st_size if temp_output.exists() else 0,
             )
+            length_scale = _eutherlink_length_scale((options or {}).get("length_scale"))
+            if abs(length_scale - 1.0) > 0.001:
+                _apply_eutherlink_length_scale(temp_output, length_scale)
+                LOGGER.warning(
+                    "TTS_TRACE eutherbooks_tempo output=%s worker_job=%s length_scale=%.3f atempo=%.6f bytes=%s",
+                    output_path,
+                    job.get("id"),
+                    length_scale,
+                    1.0 / length_scale,
+                    temp_output.stat().st_size if temp_output.exists() else 0,
+                )
             os.replace(temp_output, output_path)
         finally:
             temp_output.unlink(missing_ok=True)
@@ -240,6 +251,48 @@ def _positive_seed(value: Any) -> int | None:
     except (TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None
+
+
+def _eutherlink_length_scale(value: Any) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 1.0
+    if parsed != parsed:
+        return 1.0
+    return min(1.6, max(0.65, parsed))
+
+
+def _apply_eutherlink_length_scale(path: Path, length_scale: float) -> None:
+    atempo = 1.0 / length_scale
+    tempo_path = path.with_name(f"{path.name}.tempo.wav")
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(path),
+                "-filter:a",
+                f"atempo={atempo:.6f}",
+                "-f",
+                "wav",
+                str(tempo_path),
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        os.replace(tempo_path, path)
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or "").strip()
+        raise TtsError(f"EutherLink audio tempo adjustment failed: {detail or exc}") from exc
+    finally:
+        tempo_path.unlink(missing_ok=True)
 
 
 def _valid_voice_reference_path(value: Any) -> str:
