@@ -134,7 +134,7 @@ class EutherLinkBackend(TtsBackend):
             sample = Path(reference_path).read_bytes()
             sample_base64 = base64.b64encode(sample).decode("ascii")
             payload["reference_wav_base64"] = sample_base64
-            if prompt_text and _use_eutherlink_prompt_transcript():
+            if prompt_text and _use_eutherlink_prompt_transcript(prompt_text):
                 payload["prompt_wav_base64"] = sample_base64
                 payload["prompt_text"] = prompt_text
 
@@ -183,9 +183,15 @@ def _valid_voice_prompt_text(value: Any) -> str:
         return ""
     return "".join(ch for ch in value.strip()[:500] if ch == "\t" or ord(ch) >= 32)
 
-def _use_eutherlink_prompt_transcript() -> bool:
+EUTHERLINK_PROMPT_TRANSCRIPTS = {
+    "Solen går långsamt upp över skogen. Jag läser den här texten med min naturliga berättarröst, tydligt och lugnt, så att varje ord hörs klart.",
+    "The morning light moves slowly across the room. I read this text in my natural narrator voice, clearly and calmly, so every word is easy to hear.",
+}
+
+
+def _use_eutherlink_prompt_transcript(prompt_text: str = "") -> bool:
     value = os.environ.get("EUTHERBOOKS_EUTHERLINK_USE_PROMPT_TRANSCRIPT", "").strip().lower()
-    return value in {"1", "true", "yes", "on"}
+    return value in {"1", "true", "yes", "on"} or prompt_text.strip() in EUTHERLINK_PROMPT_TRANSCRIPTS
 
 
 def _temporary_output_path(output_path: Path) -> Path:
