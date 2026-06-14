@@ -399,8 +399,6 @@ def _append_pcm16_with_gap(left: array[int], right: array[int], channels: int, s
     if not right:
         return left
     out = array("h", left)
-    gap_frames = int(sample_rate * 0.045)
-    out.extend([0] * gap_frames * channels)
     out.extend(right)
     return out
 
