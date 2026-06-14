@@ -36,6 +36,28 @@ def test_tts_options_round_seed() -> None:
     assert _normalized_tts_options({"seed": 123.4})["seed"] == 123
 
 
+def test_tts_options_normalize_dots_params() -> None:
+    options = _normalized_tts_options(
+        {
+            "model_backend": "dots.tts-soar",
+            "dots_template_name": "tts_interleave",
+            "dots_ode_method": "midpoint",
+            "dots_num_steps": 12.4,
+            "dots_guidance_scale": 1.35,
+            "dots_speaker_scale": 1.75,
+            "dots_max_generate_length": 700.1,
+        }
+    )
+
+    assert options["model_backend"] == "dots.tts-soar"
+    assert options["dots_template_name"] == "tts_interleave"
+    assert options["dots_ode_method"] == "midpoint"
+    assert options["dots_num_steps"] == 12
+    assert options["dots_guidance_scale"] == 1.35
+    assert options["dots_speaker_scale"] == 1.75
+    assert options["dots_max_generate_length"] == 700
+
+
 def test_job_store_round_trips_jobs(tmp_path: Path) -> None:
     store = JobStore(tmp_path)
     job = TtsJob(

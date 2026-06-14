@@ -142,6 +142,17 @@ class EutherLinkBackend(TtsBackend):
             ),
             "max_chunk_chars": int((options or {}).get("max_chunk_chars") or os.environ.get("EUTHERBOOKS_EUTHERLINK_MAX_CHUNK_CHARS", "700")),
         }
+        if model_backend == "dots.tts-soar":
+            payload.update(
+                {
+                    "dots_template_name": _dots_template_name((options or {}).get("dots_template_name")),
+                    "dots_ode_method": _dots_ode_method((options or {}).get("dots_ode_method")),
+                    "dots_num_steps": _clamped_int((options or {}).get("dots_num_steps"), 1, 50, 10),
+                    "dots_guidance_scale": _clamped_float((options or {}).get("dots_guidance_scale"), 0.0, 5.0, 1.2),
+                    "dots_speaker_scale": _clamped_float((options or {}).get("dots_speaker_scale"), 0.0, 5.0, 1.5),
+                    "dots_max_generate_length": _clamped_int((options or {}).get("dots_max_generate_length"), 128, 4096, 500),
+                }
+            )
         seed = (options or {}).get("seed")
         explicit_seed = _positive_seed(seed)
         preset_seed = _eutherlink_stable_preset_seed(voice_id)
@@ -173,7 +184,7 @@ class EutherLinkBackend(TtsBackend):
             raise TtsError("dots.tts-soar requires an own voice reference WAV and matching prompt text.")
 
         LOGGER.warning(
-            "TTS_TRACE eutherbooks_submit voice=%s model_backend=%s lang=%s output=%s text_len=%s text_sha=%s seed_payload=%s seed_option=%s seed_source=%s sample_seed=%s reference_valid=%s reference_path=%s sample_size=%s sample_sha=%s prompt_text_len=%s prompt_text_sha=%s has_prompt_wav=%s has_reference_wav=%s cfg=%.3f steps=%s max_chunk_chars=%s",
+            "TTS_TRACE eutherbooks_submit voice=%s model_backend=%s lang=%s output=%s text_len=%s text_sha=%s seed_payload=%s seed_option=%s seed_source=%s sample_seed=%s reference_valid=%s reference_path=%s sample_size=%s sample_sha=%s prompt_text_len=%s prompt_text_sha=%s has_prompt_wav=%s has_reference_wav=%s cfg=%.3f steps=%s dots_guidance=%s dots_speaker=%s dots_steps=%s dots_max_len=%s max_chunk_chars=%s",
             voice,
             model_backend,
             language,
@@ -194,6 +205,10 @@ class EutherLinkBackend(TtsBackend):
             "reference_wav_base64" in payload,
             float(payload["cfg_value"]),
             payload["inference_timesteps"],
+            payload.get("dots_guidance_scale"),
+            payload.get("dots_speaker_scale"),
+            payload.get("dots_num_steps"),
+            payload.get("dots_max_generate_length"),
             payload["max_chunk_chars"],
         )
 
@@ -245,6 +260,26 @@ def _clamped_int(value: Any, minimum: int, maximum: int, fallback: int) -> int:
     except (TypeError, ValueError):
         parsed = fallback
     return min(maximum, max(minimum, parsed))
+
+
+def _clamped_float(value: Any, minimum: float, maximum: float, fallback: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = fallback
+    return min(maximum, max(minimum, parsed))
+
+
+def _dots_template_name(value: Any) -> str:
+    if isinstance(value, str) and value.strip().lower() in {"tts", "instruction_tts", "text_to_audio", "tts_interleave"}:
+        return value.strip().lower()
+    return "tts"
+
+
+def _dots_ode_method(value: Any) -> str:
+    if isinstance(value, str) and value.strip().lower() in {"euler", "midpoint"}:
+        return value.strip().lower()
+    return "euler"
 
 
 def _short_sha256(data: bytes) -> str:

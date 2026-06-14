@@ -367,6 +367,10 @@ def _normalized_tts_options(options: dict[str, Any]) -> dict[str, Any]:
         "sentence_silence": (0.0, 1.5),
         "cfg_value": (1.0, 3.0),
         "inference_timesteps": (10.0, 50.0),
+        "dots_num_steps": (1.0, 50.0),
+        "dots_guidance_scale": (0.0, 5.0),
+        "dots_speaker_scale": (0.0, 5.0),
+        "dots_max_generate_length": (128.0, 4096.0),
         "max_chunk_chars": (120.0, 1500.0),
         "seed": (0.0, 2147483647.0),
     }
@@ -378,7 +382,7 @@ def _normalized_tts_options(options: dict[str, Any]) -> dict[str, Any]:
         except (TypeError, ValueError):
             continue
         clamped = min(maximum, max(minimum, value))
-        normalized[key] = round(clamped) if key in {"inference_timesteps", "max_chunk_chars", "seed"} else clamped
+        normalized[key] = round(clamped) if key in {"inference_timesteps", "dots_num_steps", "dots_max_generate_length", "max_chunk_chars", "seed"} else clamped
     reference_path = _clean_reference_path(options.get("voice_reference_path"))
     prompt_text = _clean_prompt_text(options.get("voice_prompt_text"))
     if reference_path:
@@ -388,6 +392,12 @@ def _normalized_tts_options(options: dict[str, Any]) -> dict[str, Any]:
     model_backend = _clean_model_backend(options.get("model_backend"))
     if model_backend:
         normalized["model_backend"] = model_backend
+    dots_template_name = _clean_dots_template_name(options.get("dots_template_name"))
+    if dots_template_name:
+        normalized["dots_template_name"] = dots_template_name
+    dots_ode_method = _clean_dots_ode_method(options.get("dots_ode_method"))
+    if dots_ode_method:
+        normalized["dots_ode_method"] = dots_ode_method
     return normalized
 
 
@@ -413,6 +423,20 @@ def _clean_model_backend(value: Any) -> str:
         return ""
     normalized = value.strip().lower()
     return normalized if normalized in {"voxcpm2", "dots.tts-soar"} else ""
+
+
+def _clean_dots_template_name(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    normalized = value.strip().lower()
+    return normalized if normalized in {"tts", "instruction_tts", "text_to_audio", "tts_interleave"} else ""
+
+
+def _clean_dots_ode_method(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    normalized = value.strip().lower()
+    return normalized if normalized in {"euler", "midpoint"} else ""
 
 
 def _split_for_tts(text: str, max_chars: int = DEFAULT_MAX_CHARS_PER_AUDIO_FILE) -> list[str]:

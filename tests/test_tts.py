@@ -128,11 +128,26 @@ def test_eutherlink_dots_voice_sends_model_backend_and_prompt(monkeypatch, tmp_p
         output,
         "sv",
         "dots-soar-own-sv",
-        {"voice_reference_path": str(sample), "voice_prompt_text": "Detta sade jag i samplet."},
+        {
+            "voice_reference_path": str(sample),
+            "voice_prompt_text": "Detta sade jag i samplet.",
+            "dots_template_name": "instruction_tts",
+            "dots_ode_method": "midpoint",
+            "dots_num_steps": 14,
+            "dots_guidance_scale": 1.4,
+            "dots_speaker_scale": 1.8,
+            "dots_max_generate_length": 640,
+        },
     )
 
     assert captured["model_backend"] == "dots.tts-soar"
     assert captured["voice_instruction"] == ""
+    assert captured["dots_template_name"] == "instruction_tts"
+    assert captured["dots_ode_method"] == "midpoint"
+    assert captured["dots_num_steps"] == 14
+    assert captured["dots_guidance_scale"] == 1.4
+    assert captured["dots_speaker_scale"] == 1.8
+    assert captured["dots_max_generate_length"] == 640
     assert "reference_wav_base64" in captured
     assert "prompt_wav_base64" in captured
     assert captured["prompt_text"] == "Detta sade jag i samplet."

@@ -65,6 +65,12 @@ class CreateJobRequest(BaseModel):
     sentence_silence: float | None = Field(default=None, examples=[0.2])
     cfg_value: float | None = Field(default=None, ge=1.0, le=3.0, examples=[2.0])
     inference_timesteps: int | None = Field(default=None, ge=1, le=50, examples=[10])
+    dots_template_name: str | None = Field(default=None, examples=["tts"])
+    dots_ode_method: str | None = Field(default=None, examples=["euler"])
+    dots_num_steps: int | None = Field(default=None, ge=1, le=50, examples=[10])
+    dots_guidance_scale: float | None = Field(default=None, ge=0.0, le=5.0, examples=[1.2])
+    dots_speaker_scale: float | None = Field(default=None, ge=0.0, le=5.0, examples=[1.5])
+    dots_max_generate_length: int | None = Field(default=None, ge=128, le=4096, examples=[500])
     max_chunk_chars: int | None = Field(default=None, ge=120, le=1500, examples=[700])
     seed: int | None = Field(default=None, ge=0, le=2147483647, examples=[123456])
     voice_reference_path: str | None = Field(default=None, max_length=600)
@@ -226,6 +232,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "sentence_silence": request.sentence_silence,
                     "cfg_value": request.cfg_value,
                     "inference_timesteps": request.inference_timesteps,
+                    "dots_template_name": request.dots_template_name,
+                    "dots_ode_method": request.dots_ode_method,
+                    "dots_num_steps": request.dots_num_steps,
+                    "dots_guidance_scale": request.dots_guidance_scale,
+                    "dots_speaker_scale": request.dots_speaker_scale,
+                    "dots_max_generate_length": request.dots_max_generate_length,
                     "max_chunk_chars": request.max_chunk_chars,
                     "seed": request.seed,
                     "voice_reference_path": request.voice_reference_path,
