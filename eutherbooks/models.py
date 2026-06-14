@@ -45,6 +45,7 @@ class TtsJob:
     language: str
     voice: str
     chapter_indexes: list[int]
+    owner: str = ""
     audio_files: list[str] = field(default_factory=list)
     audio_durations: list[float] = field(default_factory=list)
     total_audio_files: int = 0

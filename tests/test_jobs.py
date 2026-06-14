@@ -143,6 +143,44 @@ def test_job_store_resets_incomplete_jobs(tmp_path: Path) -> None:
     assert loaded.progress_detail == "Restarted."
 
 
+def test_job_store_cancels_incomplete_jobs_for_owner(tmp_path: Path) -> None:
+    store = JobStore(tmp_path)
+    store.put(
+        TtsJob(
+            id="job1",
+            book_id="book1",
+            status=JobStatus.RUNNING,
+            language="sv",
+            voice="sv",
+            chapter_indexes=[0],
+            owner="nichlas",
+        )
+    )
+    store.put(
+        TtsJob(
+            id="job2",
+            book_id="book2",
+            status=JobStatus.QUEUED,
+            language="sv",
+            voice="sv",
+            chapter_indexes=[0],
+            owner="other",
+        )
+    )
+
+    cancelled = store.cancel_incomplete_for_owner("nichlas", "Cancelled by newer job.")
+
+    assert cancelled == 1
+    job1 = store.get("job1")
+    job2 = store.get("job2")
+    assert job1 is not None
+    assert job1.status == JobStatus.FAILED
+    assert job1.error == "Cancelled by newer job."
+    assert job1.progress_label == "Cancelled"
+    assert job2 is not None
+    assert job2.status == JobStatus.QUEUED
+
+
 def test_tts_queue_reuses_existing_active_job(tmp_path: Path) -> None:
     library_dir = tmp_path / "library"
     book_path = library_dir / "book.txt"

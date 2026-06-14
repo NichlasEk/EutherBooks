@@ -56,6 +56,31 @@ class JobStore:
             payload = {job_id: asdict(value) for job_id, value in jobs.items()}
             self.path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
+    def cancel_incomplete_for_owner(self, owner: str, reason: str, except_job_id: str | None = None) -> int:
+        clean_owner = owner.strip()
+        if not clean_owner:
+            return 0
+        with self._lock:
+            jobs = self._read()
+            changed = False
+            cancelled = 0
+            for job in jobs.values():
+                if job.id == except_job_id or job.owner != clean_owner:
+                    continue
+                if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
+                    job.status = JobStatus.FAILED
+                    job.error = reason
+                    job.progress_label = "Cancelled"
+                    job.progress_detail = reason
+                    job.worker_progress = 0.0
+                    changed = True
+                    cancelled += 1
+            if changed:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                payload = {job_id: asdict(value) for job_id, value in jobs.items()}
+                self.path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+            return cancelled
+
     def reset_incomplete(self, reason: str = "Interrupted by service restart.") -> None:
         with self._lock:
             jobs = self._read()
@@ -85,6 +110,7 @@ class JobStore:
                 language=value["language"],
                 voice=value["voice"],
                 chapter_indexes=list(value["chapter_indexes"]),
+                owner=str(value.get("owner") or ""),
                 audio_files=list(value.get("audio_files", [])),
                 audio_durations=_stored_audio_durations(value),
                 total_audio_files=int(value.get("total_audio_files", 0)),
@@ -118,6 +144,7 @@ class TtsQueue:
         chapter_indexes: list[int] | None = None,
         tts_options: dict[str, Any] | None = None,
         queue_remainder: bool = False,
+        owner: str = "",
     ) -> TtsJob:
         chapters = self.library.chapters_for(book_id)
         book = self.library.get_book(book_id)
@@ -126,6 +153,7 @@ class TtsQueue:
         if pdf_remainder and not indexes:
             indexes = [0]
         options = _normalized_tts_options(tts_options or {})
+        clean_owner = _clean_owner(owner)
         options_key = json.dumps(options, sort_keys=True, separators=(",", ":"))
         mode_key = ":remainder" if pdf_remainder else ""
         job_id = stable_job_id(book_id, f"{self.backend.name}:{voice}:{options_key}{mode_key}", indexes)
@@ -136,10 +164,17 @@ class TtsQueue:
         )
         existing = self.store.get(job_id)
         if existing and existing.status in {JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.DONE}:
+            if existing.owner != clean_owner:
+                existing.owner = clean_owner
+                self.store.put(existing)
             if existing.total_audio_files <= 0:
                 existing.total_audio_files = total_audio_files
                 self.store.put(existing)
+            self.store.cancel_incomplete_for_owner(clean_owner, "Cancelled by a newer request from the same user.", existing.id)
             return existing
+
+        if clean_owner:
+            self.store.cancel_incomplete_for_owner(clean_owner, "Cancelled by a newer request from the same user.")
 
         job = TtsJob(
             id=job_id,
@@ -148,6 +183,7 @@ class TtsQueue:
             language=language,
             voice=voice,
             chapter_indexes=indexes,
+            owner=clean_owner,
             total_audio_files=total_audio_files,
             tts_options=options,
             queue_remainder=pdf_remainder,
@@ -178,6 +214,7 @@ class TtsQueue:
             self._set_progress(job, "Preparing", "Loading text and speech settings.")
 
             try:
+                self._raise_if_cancelled(job.id)
                 if job.queue_remainder:
                     self._run_progressive_pdf_job(job)
                     return
@@ -193,6 +230,7 @@ class TtsQueue:
                     chapter = chapters[chapter_index]
                     chunks = _split_for_tts(chapter.text, max_chars=_max_chars_for_options(self.backend.name, job.tts_options))
                     for chunk_index, chunk in enumerate(chunks):
+                        self._raise_if_cancelled(job.id)
                         relative = Path(job.book_id) / job.id / f"{chapter_index:04d}-{chunk_index:03d}.wav"
                         output_path = self.audio_dir / relative
                         job.current_chapter_index = chapter_index
@@ -250,6 +288,7 @@ class TtsQueue:
                                     "eutherbooks_part_output_bytes": output_path.stat().st_size if output_path.exists() else 0,
                                 }
                             )
+                            self._raise_if_cancelled(job.id)
                             if len(audio_files) > partials_before:
                                 continue
                         relative_posix = relative.as_posix()
@@ -267,6 +306,7 @@ class TtsQueue:
                                 f"{len(audio_files)}/{max(job.total_audio_files, len(audio_files))} audio files generated.",
                             )
 
+                self._raise_if_cancelled(job.id)
                 job.audio_files = audio_files
                 job.audio_durations = audio_durations
                 job.status = JobStatus.DONE
@@ -275,10 +315,14 @@ class TtsQueue:
                 job.worker_progress = 0.0
                 self._set_progress(job, "Ready", f"{len(audio_files)} {_audio_file_word(len(audio_files))} generated.")
             except Exception as exc:  # noqa: BLE001
+                message = str(exc)
                 job.status = JobStatus.FAILED
-                job.error = str(exc)
+                job.error = message
                 job.worker_progress = 0.0
-                self._set_progress(job, "Failed", str(exc))
+                if message.startswith("Cancelled"):
+                    self._set_progress(job, "Cancelled", message)
+                else:
+                    self._set_progress(job, "Failed", message)
             finally:
                 self.store.put(job)
 
@@ -458,6 +502,13 @@ class TtsQueue:
         job.current_chunk_index = len(audio_files)
         self.store.put(job)
 
+    def _raise_if_cancelled(self, job_id: str) -> None:
+        latest = self.store.get(job_id)
+        if latest is None:
+            raise RuntimeError("TTS job disappeared.")
+        if latest.status == JobStatus.FAILED and str(latest.error or "").startswith("Cancelled"):
+            raise RuntimeError(latest.error or "Cancelled by a newer request.")
+
     def _set_progress(self, job: TtsJob, label: str, detail: str = "") -> None:
         job.progress_label = label
         job.progress_detail = detail
@@ -554,6 +605,14 @@ def _stored_progress_detail(value: dict[str, Any]) -> str:
 
 def _audio_file_word(count: int) -> str:
     return "audio file" if count == 1 else "audio files"
+
+
+def _clean_owner(value: Any) -> str:
+    owner = str(value or "").strip()
+    if not owner:
+        return "anonymous"
+    safe = "".join(ch for ch in owner[:120] if ch.isalnum() or ch in {"-", "_", ".", "@"})
+    return safe or "anonymous"
 
 
 def _normalized_tts_options(options: dict[str, Any]) -> dict[str, Any]:

@@ -61,6 +61,7 @@ class CreateJobRequest(BaseModel):
     language: str | None = Field(default=None, examples=["sv"])
     voice: str | None = Field(default=None, examples=["sv"])
     model_backend: str | None = Field(default=None, examples=["voxcpm2"])
+    owner: str | None = Field(default=None, max_length=120)
     chapters: list[int] | None = None
     length_scale: float | None = Field(default=None, examples=[1.0])
     noise_scale: float | None = Field(default=None, examples=[0.667])
@@ -99,6 +100,7 @@ class JobResponse(BaseModel):
     language: str
     voice: str
     chapter_indexes: list[int]
+    owner: str
     audio_files: list[str]
     audio_durations: list[float]
     total_audio_files: int
@@ -122,6 +124,7 @@ class JobResponse(BaseModel):
             language=job.language,
             voice=job.voice,
             chapter_indexes=job.chapter_indexes,
+            owner=job.owner,
             audio_files=job.audio_files,
             audio_durations=job.audio_durations,
             total_audio_files=job.total_audio_files,
@@ -246,6 +249,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 language=request.language or settings.default_language,
                 voice=request.voice or settings.tts_voice,
                 chapter_indexes=request.chapters,
+                owner=_clean_job_owner(request.owner),
                 tts_options={
                     "length_scale": request.length_scale,
                     "noise_scale": request.noise_scale,
@@ -314,6 +318,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 app = create_app()
 
+
+def _clean_job_owner(value: str | None) -> str:
+    owner = (value or "").strip()
+    if not owner:
+        return "anonymous"
+    safe = "".join(ch for ch in owner[:120] if ch.isalnum() or ch in {"-", "_", ".", "@"})
+    return safe or "anonymous"
 
 def _resolve_audio_path(audio_dir: Path, audio_path: str) -> Path:
     root = audio_dir.resolve()
