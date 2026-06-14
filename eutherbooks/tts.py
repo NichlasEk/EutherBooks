@@ -224,6 +224,38 @@ class EutherLinkBackend(TtsBackend):
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         temp_output = _temporary_output_path(output_path)
+        length_scale = _eutherlink_length_scale((options or {}).get("length_scale"))
+        downloaded_partials: dict[str, Path] = {}
+
+        def publish_partials(status_payload: dict[str, Any]) -> None:
+            changed = False
+            for value in status_payload.get("partial_audio_urls") or []:
+                partial_url = _absolute_worker_url(base_url, str(value))
+                if partial_url in downloaded_partials:
+                    continue
+                partial_path = output_path.with_name(f"{output_path.stem}.stream-{len(downloaded_partials) + 1:03d}.wav")
+                temp_partial = _temporary_output_path(partial_path)
+                try:
+                    _download_file(partial_url, temp_partial, timeout)
+                    if abs(length_scale - 1.0) > 0.001:
+                        _apply_eutherlink_length_scale(temp_partial, length_scale)
+                    os.replace(temp_partial, partial_path)
+                finally:
+                    temp_partial.unlink(missing_ok=True)
+                downloaded_partials[partial_url] = partial_path
+                changed = True
+                LOGGER.warning(
+                    "TTS_TRACE eutherbooks_partial_download output=%s worker_job=%s partial=%s bytes=%s",
+                    output_path,
+                    status_payload.get("id") or job.get("id"),
+                    partial_path,
+                    partial_path.stat().st_size if partial_path.exists() else 0,
+                )
+            if progress_callback is not None:
+                update = dict(status_payload)
+                update["partial_audio_paths"] = [str(path) for path in downloaded_partials.values()]
+                progress_callback(update)
+
         try:
             job = _request_json(f"{base_url}/v1/tts/jobs", payload, timeout)
             LOGGER.warning("TTS_TRACE eutherbooks_worker_accepted output=%s worker_job=%s", output_path, job.get("id"))
@@ -236,11 +268,11 @@ class EutherLinkBackend(TtsBackend):
                     raise TtsError("EutherLink TTS job timed out.")
                 time.sleep(poll_interval)
                 status = _request_json(status_url, None, timeout)
-                if progress_callback is not None:
-                    progress_callback(status)
+                publish_partials(status)
 
             if status.get("status") != "done":
                 raise TtsError(str(status.get("error") or status.get("message") or "EutherLink TTS job failed."))
+            publish_partials(status)
 
             audio_url = _absolute_worker_url(base_url, str(status.get("audio_url") or job["audio_url"]))
             _download_file(audio_url, temp_output, timeout)
@@ -250,7 +282,6 @@ class EutherLinkBackend(TtsBackend):
                 job.get("id"),
                 temp_output.stat().st_size if temp_output.exists() else 0,
             )
-            length_scale = _eutherlink_length_scale((options or {}).get("length_scale"))
             if abs(length_scale - 1.0) > 0.001:
                 _apply_eutherlink_length_scale(temp_output, length_scale)
                 LOGGER.warning(

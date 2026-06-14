@@ -197,6 +197,47 @@ def test_eutherlink_explicit_model_backend_option_wins(monkeypatch, tmp_path: Pa
     assert captured["model_backend"] == "voxcpm2"
 
 
+def test_eutherlink_downloads_stream_partials(monkeypatch, tmp_path: Path) -> None:
+    output = tmp_path / "out.wav"
+    captured: dict[str, object] = {}
+    callbacks: list[dict[str, object]] = []
+    statuses = iter(
+        [
+            {"id": "job1", "status": "running", "partial_audio_urls": ["/partials/one.wav"]},
+            {"id": "job1", "status": "done", "audio_url": "/audio", "partial_audio_urls": ["/partials/one.wav"]},
+        ]
+    )
+
+    monkeypatch.setenv("EUTHERBOOKS_EUTHERLINK_POLL_INTERVAL", "0")
+
+    def fake_request_json(url, payload, timeout):
+        if payload is not None:
+            captured.update(payload)
+            return {"id": "job1", "status_url": "/status", "audio_url": "/audio", "status": "queued"}
+        return next(statuses)
+
+    def fake_download_file(url, output_path, timeout):
+        output_path.write_bytes(b"final" if url.endswith("/audio") else b"partial")
+
+    monkeypatch.setattr(tts, "_request_json", fake_request_json)
+    monkeypatch.setattr(tts, "_download_file", fake_download_file)
+
+    tts.EutherLinkBackend().synthesize(
+        "Hej",
+        output,
+        "sv",
+        "sv-female",
+        {"model_backend": "voxcpm2"},
+        progress_callback=callbacks.append,
+    )
+
+    partial = tmp_path / "out.stream-001.wav"
+    assert captured["model_backend"] == "voxcpm2"
+    assert output.read_bytes() == b"final"
+    assert partial.read_bytes() == b"partial"
+    assert callbacks[-1]["partial_audio_paths"] == [str(partial)]
+
+
 def test_eutherlink_own_voice_sends_builtin_reading_prompt_as_transcript(monkeypatch, tmp_path: Path) -> None:
     sample_root = tmp_path / "user-data"
     sample = sample_root / "nichlas" / "eutherbooks" / "voices" / "own-sv.wav"
@@ -204,7 +245,7 @@ def test_eutherlink_own_voice_sends_builtin_reading_prompt_as_transcript(monkeyp
     sample.write_bytes(b"RIFF" + b"\0" * 4 + b"WAVE" + b"sample")
     output = tmp_path / "out.wav"
     captured: dict[str, object] = {}
-    prompt = next(iter(tts.EUTHERLINK_PROMPT_TRANSCRIPTS))
+    prompt = tts.EUTHERLINK_PROMPT_TRANSCRIPT_BY_VOICE["own-sv"]
 
     monkeypatch.setenv("EUTHERBOOKS_VOICE_REFERENCE_ROOT", str(sample_root))
     monkeypatch.delenv("EUTHERBOOKS_EUTHERLINK_USE_PROMPT_TRANSCRIPT", raising=False)

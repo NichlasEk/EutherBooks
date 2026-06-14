@@ -182,6 +182,7 @@ class TtsQueue:
                 chapters = {chapter.index: chapter for chapter in self.library.chapters_for(job.book_id)}
                 audio_files: list[str] = []
                 audio_durations: list[float] = []
+                seen_audio: set[str] = set()
                 total_chunks = self._total_audio_files(list(chapters.values()), job.chapter_indexes, job.tts_options)
                 job.total_chunks = total_chunks
                 job.total_audio_files = max(job.total_audio_files, total_chunks)
@@ -217,6 +218,7 @@ class TtsQueue:
                             _short_sha256(chunk.encode("utf-8")),
                         )
                         if not output_path.exists() or output_path.stat().st_size == 0:
+                            partials_before = len(audio_files)
                             self.backend.synthesize(
                                 chunk,
                                 output_path,
@@ -229,19 +231,32 @@ class TtsQueue:
                                     f"{chapter.title}: part {chunk_index + 1}/{len(chunks)} ({len(audio_files) + 1}/{total_chunks})",
                                     lambda: len(audio_files),
                                     chapter_index,
+                                    lambda status: self._publish_partial_audio(
+                                        job,
+                                        audio_files,
+                                        audio_durations,
+                                        seen_audio,
+                                        status,
+                                        total_chunks,
+                                    ),
                                 ),
                             )
-                        audio_files.append(relative.as_posix())
-                        audio_durations.append(_wav_duration_seconds(output_path))
-                        job.audio_files = audio_files
-                        job.audio_durations = audio_durations
-                        job.current_chunk_index = len(audio_files)
-                        job.worker_progress = 0.0
-                        self._set_progress(
-                            job,
-                            "Audio ready",
-                            f"{len(audio_files)}/{max(job.total_audio_files, len(audio_files))} audio files generated.",
-                        )
+                            if len(audio_files) > partials_before:
+                                continue
+                        relative_posix = relative.as_posix()
+                        if relative_posix not in seen_audio:
+                            seen_audio.add(relative_posix)
+                            audio_files.append(relative_posix)
+                            audio_durations.append(_wav_duration_seconds(output_path))
+                            job.audio_files = audio_files
+                            job.audio_durations = audio_durations
+                            job.current_chunk_index = len(audio_files)
+                            job.worker_progress = 0.0
+                            self._set_progress(
+                                job,
+                                "Audio ready",
+                                f"{len(audio_files)}/{max(job.total_audio_files, len(audio_files))} audio files generated.",
+                            )
 
                 job.audio_files = audio_files
                 job.audio_durations = audio_durations
@@ -307,6 +322,7 @@ class TtsQueue:
                         _short_sha256(chunk.encode("utf-8")),
                     )
                     if not output_path.exists() or output_path.stat().st_size == 0:
+                        partials_before = len(audio_files)
                         self.backend.synthesize(
                             chunk,
                             output_path,
@@ -319,8 +335,18 @@ class TtsQueue:
                                 f"Page {chapter.index + 1}, part {chunk_index + 1}/{len(chunks)}; {len(audio_files)}/{max(job.total_audio_files, len(audio_files) + 1)} ready.",
                                 lambda: len(audio_files),
                                 chapter.index,
+                                lambda status: self._publish_partial_audio(
+                                    job,
+                                    audio_files,
+                                    audio_durations,
+                                    seen_audio,
+                                    status,
+                                    total_pages - start_index,
+                                ),
                             ),
                         )
+                        if len(audio_files) > partials_before:
+                            continue
                     if relative_posix not in seen_audio:
                         seen_audio.add(relative_posix)
                         audio_files.append(relative_posix)
@@ -358,8 +384,11 @@ class TtsQueue:
         base_detail: str,
         ready_count: Callable[[], int],
         chapter_index: int,
+        partial_publisher: Callable[[dict[str, Any]], None] | None = None,
     ) -> Callable[[dict[str, Any]], None]:
         def update(status: dict[str, Any]) -> None:
+            if partial_publisher is not None:
+                partial_publisher(status)
             progress = _stored_worker_progress(status)
             message = str(status.get("message") or "").strip()
             job.worker_progress = progress
@@ -372,6 +401,37 @@ class TtsQueue:
             self._set_progress(job, label, detail)
 
         return update
+
+    def _publish_partial_audio(
+        self,
+        job: TtsJob,
+        audio_files: list[str],
+        audio_durations: list[float],
+        seen_audio: set[str],
+        status: dict[str, Any],
+        total_hint: int,
+    ) -> None:
+        changed = False
+        for value in status.get("partial_audio_paths") or []:
+            path = Path(str(value))
+            try:
+                relative = path.relative_to(self.audio_dir).as_posix()
+            except ValueError:
+                continue
+            if relative in seen_audio or not path.exists() or path.stat().st_size <= 0:
+                continue
+            seen_audio.add(relative)
+            audio_files.append(relative)
+            audio_durations.append(_wav_duration_seconds(path))
+            changed = True
+        if not changed:
+            return
+        job.audio_files = audio_files
+        job.audio_durations = audio_durations
+        job.total_audio_files = max(job.total_audio_files, len(audio_files), total_hint)
+        job.total_chunks = max(job.total_chunks, job.total_audio_files)
+        job.current_chunk_index = len(audio_files)
+        self.store.put(job)
 
     def _set_progress(self, job: TtsJob, label: str, detail: str = "") -> None:
         job.progress_label = label
