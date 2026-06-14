@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from array import array
 from pathlib import Path
+import sys
 import uuid
 import wave
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -320,25 +322,90 @@ def _ensure_combined_wav(source_paths: list[Path], combined_path: Path) -> None:
     combined_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = combined_path.with_name(f".{combined_path.name}.{uuid.uuid4().hex}.tmp")
     try:
-        first_params = None
-        with wave.open(str(temp_path), "wb") as output:
-            for source_path in source_paths:
-                with wave.open(str(source_path), "rb") as source:
-                    params = source.getparams()
-                    comparable = (params.nchannels, params.sampwidth, params.framerate, params.comptype, params.compname)
-                    if first_params is None:
-                        first_params = comparable
-                        output.setparams(params)
-                    elif comparable != first_params:
-                        raise ValueError("Audio parts use incompatible WAV formats")
-                    while True:
-                        frames = source.readframes(8192)
-                        if not frames:
-                            break
-                        output.writeframesraw(frames)
+        _write_smoothed_combined_wav(source_paths, temp_path)
         temp_path.replace(combined_path)
     finally:
         temp_path.unlink(missing_ok=True)
+
+
+def _write_smoothed_combined_wav(source_paths: list[Path], output_path: Path) -> None:
+    first_params = None
+    combined: array[int] | None = None
+    for index, source_path in enumerate(source_paths):
+        params, samples = _read_pcm16_wav(source_path)
+        comparable = (params.nchannels, params.sampwidth, params.framerate, params.comptype, params.compname)
+        if first_params is None:
+            first_params = params
+            combined = samples
+            continue
+        first_comparable = (first_params.nchannels, first_params.sampwidth, first_params.framerate, first_params.comptype, first_params.compname)
+        if comparable != first_comparable:
+            raise ValueError("Audio parts use incompatible WAV formats")
+        samples = _trim_leading_pcm16_silence(samples, params.nchannels, params.framerate)
+        combined = _crossfade_pcm16(combined or array("h"), samples, params.nchannels, params.framerate)
+
+    if first_params is None or combined is None:
+        raise ValueError("No audio parts to combine")
+    with wave.open(str(output_path), "wb") as output:
+        output.setparams(first_params)
+        output.writeframes(combined.tobytes())
+
+
+def _read_pcm16_wav(path: Path) -> tuple[wave._wave_params, array[int]]:
+    with wave.open(str(path), "rb") as source:
+        params = source.getparams()
+        if params.sampwidth != 2 or params.comptype != "NONE":
+            raise ValueError("Only PCM16 WAV audio can be combined")
+        samples = array("h")
+        samples.frombytes(source.readframes(params.nframes))
+    if sys.byteorder != "little":
+        samples.byteswap()
+    return params, samples
+
+
+def _trim_leading_pcm16_silence(samples: array[int], channels: int, sample_rate: int) -> array[int]:
+    if not samples:
+        return samples
+    max_trim_frames = min(len(samples) // channels, int(sample_rate * 0.32))
+    window_frames = max(1, int(sample_rate * 0.02))
+    threshold = 260
+    trim_frames = 0
+    while trim_frames + window_frames <= max_trim_frames:
+        start = trim_frames * channels
+        end = (trim_frames + window_frames) * channels
+        window = samples[start:end]
+        if not window:
+            break
+        rms = int((sum(sample * sample for sample in window) / len(window)) ** 0.5)
+        if rms >= threshold:
+            break
+        trim_frames += window_frames
+    if trim_frames <= 0:
+        return samples
+    return samples[trim_frames * channels :]
+
+
+def _crossfade_pcm16(left: array[int], right: array[int], channels: int, sample_rate: int) -> array[int]:
+    if not left:
+        return right
+    if not right:
+        return left
+    fade_frames = min(int(sample_rate * 0.075), len(left) // channels, len(right) // channels)
+    if fade_frames <= 0:
+        return left + right
+    fade_samples = fade_frames * channels
+    out = array("h", left[:-fade_samples])
+    left_tail = left[-fade_samples:]
+    right_head = right[:fade_samples]
+    for frame in range(fade_frames):
+        right_weight = (frame + 1) / fade_frames
+        left_weight = 1.0 - right_weight
+        for channel in range(channels):
+            sample_index = frame * channels + channel
+            mixed = int(left_tail[sample_index] * left_weight + right_head[sample_index] * right_weight)
+            out.append(max(-32768, min(32767, mixed)))
+    out.extend(right[fade_samples:])
+    return out
 
 
 def _eutherlink_voices() -> list[VoiceResponse]:
