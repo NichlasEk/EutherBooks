@@ -154,7 +154,13 @@ class EutherLinkBackend(TtsBackend):
                 {
                     "dots_template_name": _dots_template_name((options or {}).get("dots_template_name")),
                     "dots_ode_method": _dots_ode_method((options or {}).get("dots_ode_method")),
-                    "dots_num_steps": _clamped_int((options or {}).get("dots_num_steps"), 1, 50, 10),
+                    "dots_num_steps": _clamped_int(
+                        (options or {}).get("dots_num_steps")
+                        or os.environ.get("EUTHERBOOKS_DOTS_NUM_STEPS", "4"),
+                        1,
+                        50,
+                        4,
+                    ),
                     "dots_guidance_scale": _clamped_float((options or {}).get("dots_guidance_scale"), 0.0, 5.0, 1.2),
                     "dots_speaker_scale": _clamped_float((options or {}).get("dots_speaker_scale"), 0.0, 5.0, 1.5),
                     "dots_max_generate_length": _clamped_int((options or {}).get("dots_max_generate_length"), 128, 4096, 500),

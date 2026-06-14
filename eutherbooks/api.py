@@ -70,7 +70,7 @@ class CreateJobRequest(BaseModel):
     inference_timesteps: int | None = Field(default=None, ge=1, le=50, examples=[10])
     dots_template_name: str | None = Field(default=None, examples=["tts"])
     dots_ode_method: str | None = Field(default=None, examples=["euler"])
-    dots_num_steps: int | None = Field(default=None, ge=1, le=50, examples=[10])
+    dots_num_steps: int | None = Field(default=None, ge=1, le=50, examples=[4])
     dots_guidance_scale: float | None = Field(default=None, ge=0.0, le=5.0, examples=[1.2])
     dots_speaker_scale: float | None = Field(default=None, ge=0.0, le=5.0, examples=[1.5])
     dots_max_generate_length: int | None = Field(default=None, ge=128, le=4096, examples=[500])
