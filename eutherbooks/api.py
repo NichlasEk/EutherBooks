@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import uuid
 import wave
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -317,24 +318,27 @@ def _ensure_combined_wav(source_paths: list[Path], combined_path: Path) -> None:
     if combined_path.exists() and combined_path.stat().st_mtime_ns >= newest_source:
         return
     combined_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = combined_path.with_name(f".{combined_path.name}.tmp")
-    first_params = None
-    with wave.open(str(temp_path), "wb") as output:
-        for source_path in source_paths:
-            with wave.open(str(source_path), "rb") as source:
-                params = source.getparams()
-                comparable = (params.nchannels, params.sampwidth, params.framerate, params.comptype, params.compname)
-                if first_params is None:
-                    first_params = comparable
-                    output.setparams(params)
-                elif comparable != first_params:
-                    raise ValueError("Audio parts use incompatible WAV formats")
-                while True:
-                    frames = source.readframes(8192)
-                    if not frames:
-                        break
-                    output.writeframesraw(frames)
-    temp_path.replace(combined_path)
+    temp_path = combined_path.with_name(f".{combined_path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        first_params = None
+        with wave.open(str(temp_path), "wb") as output:
+            for source_path in source_paths:
+                with wave.open(str(source_path), "rb") as source:
+                    params = source.getparams()
+                    comparable = (params.nchannels, params.sampwidth, params.framerate, params.comptype, params.compname)
+                    if first_params is None:
+                        first_params = comparable
+                        output.setparams(params)
+                    elif comparable != first_params:
+                        raise ValueError("Audio parts use incompatible WAV formats")
+                    while True:
+                        frames = source.readframes(8192)
+                        if not frames:
+                            break
+                        output.writeframesraw(frames)
+        temp_path.replace(combined_path)
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 def _eutherlink_voices() -> list[VoiceResponse]:
