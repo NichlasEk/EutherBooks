@@ -304,14 +304,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             _ensure_combined_wav(source_paths, combined_path)
         except ValueError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-        return FileResponse(combined_path, media_type="audio/wav")
+        return FileResponse(combined_path, media_type="audio/wav", headers={"Cache-Control": "no-store"})
 
     @app.get("/audio/{audio_path:path}")
     def get_audio(audio_path: str) -> FileResponse:
         path = _resolve_audio_path(settings.audio_dir, audio_path)
         if not path.exists():
             raise HTTPException(status_code=404, detail="Audio not found")
-        return FileResponse(path, media_type="audio/wav")
+        return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "no-store"})
 
     return app
 
