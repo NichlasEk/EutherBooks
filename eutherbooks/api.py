@@ -57,6 +57,7 @@ class ChapterTextResponse(ChapterResponse):
 class CreateJobRequest(BaseModel):
     language: str | None = Field(default=None, examples=["sv"])
     voice: str | None = Field(default=None, examples=["sv"])
+    model_backend: str | None = Field(default=None, examples=["voxcpm2"])
     chapters: list[int] | None = None
     length_scale: float | None = Field(default=None, examples=[1.0])
     noise_scale: float | None = Field(default=None, examples=[0.667])
@@ -77,6 +78,7 @@ class VoiceResponse(BaseModel):
     language: str
     backend: str
     path: str
+    model_backend: str | None = None
     default_length_scale: float | None = None
     default_seed: int | None = None
 
@@ -228,6 +230,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "seed": request.seed,
                     "voice_reference_path": request.voice_reference_path,
                     "voice_prompt_text": request.voice_prompt_text,
+                    "model_backend": request.model_backend,
                 },
                 queue_remainder=request.queue_remainder,
             )
@@ -348,6 +351,8 @@ def _eutherlink_voices() -> list[VoiceResponse]:
         ("en-character-gritty", "English gritty character voice", "en", "preset:en-character-gritty", 1.18),
         ("own-sv", "Your own voice SV", "sv", "user:own-sv", None),
         ("own-en", "Your own voice EN", "en", "user:own-en", None),
+        ("dots-soar-own-sv", "Dots SOAR own voice SV", "sv", "user:own-sv", None),
+        ("dots-soar-own-en", "Dots SOAR own voice EN", "en", "user:own-en", None),
         ("custom", "Custom voice prompt", "sv", "preset:custom", None),
     ]
     return [
@@ -357,6 +362,7 @@ def _eutherlink_voices() -> list[VoiceResponse]:
             language=language,
             backend="eutherlink",
             path=path,
+            model_backend="dots.tts-soar" if voice_id.startswith("dots-soar-") else "voxcpm2",
             default_length_scale=length_scale,
             default_seed=_default_voice_seed(voice_id) if path.startswith("preset:") and voice_id != "custom" else None,
         )

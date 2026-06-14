@@ -123,12 +123,15 @@ class EutherLinkBackend(TtsBackend):
         base_url = os.environ.get("EUTHERBOOKS_EUTHERLINK_URL", "http://192.168.32.88:8765").rstrip("/")
         timeout = float(os.environ.get("EUTHERBOOKS_EUTHERLINK_TIMEOUT", "15"))
         poll_interval = float(os.environ.get("EUTHERBOOKS_EUTHERLINK_POLL_INTERVAL", "1.0"))
-        voice_instruction = _eutherlink_voice_instruction(voice)
+        model_backend = _eutherlink_model_backend(voice, (options or {}).get("model_backend"))
+        voice_id = _eutherlink_voice_id(voice)
+        voice_instruction = _eutherlink_voice_instruction(voice_id)
         payload: dict[str, Any] = {
             "text": text,
             "voice_instruction": voice_instruction,
             "language": language,
             "output_format": "wav",
+            "model_backend": model_backend,
             "cfg_value": float((options or {}).get("cfg_value") or os.environ.get("EUTHERBOOKS_EUTHERLINK_CFG_VALUE", "2.0")),
             "inference_timesteps": _clamped_int(
                 (options or {}).get("inference_timesteps")
@@ -141,7 +144,7 @@ class EutherLinkBackend(TtsBackend):
         }
         seed = (options or {}).get("seed")
         explicit_seed = _positive_seed(seed)
-        preset_seed = _eutherlink_stable_preset_seed(voice)
+        preset_seed = _eutherlink_stable_preset_seed(voice_id)
         if explicit_seed is not None:
             payload["seed"] = explicit_seed
         elif preset_seed is not None:
@@ -151,7 +154,7 @@ class EutherLinkBackend(TtsBackend):
         sample_sha = ""
         sample_seed: int | None = None
         sample_size = 0
-        if voice in {"own-sv", "own-en"} and reference_path:
+        if voice_id in {"own-sv", "own-en"} and reference_path:
             sample_path = Path(reference_path)
             sample = sample_path.read_bytes()
             sample_sha = _short_sha256(sample)
@@ -161,13 +164,18 @@ class EutherLinkBackend(TtsBackend):
                 payload["seed"] = sample_seed
             sample_base64 = base64.b64encode(sample).decode("ascii")
             payload["reference_wav_base64"] = sample_base64
-            if prompt_text and _use_eutherlink_prompt_transcript(prompt_text):
+            if prompt_text and (model_backend == "dots.tts-soar" or _use_eutherlink_prompt_transcript(prompt_text)):
                 payload["prompt_wav_base64"] = sample_base64
                 payload["prompt_text"] = prompt_text
+        if model_backend == "dots.tts-soar" and (
+            "prompt_wav_base64" not in payload or not payload.get("prompt_text")
+        ):
+            raise TtsError("dots.tts-soar requires an own voice reference WAV and matching prompt text.")
 
         LOGGER.warning(
-            "TTS_TRACE eutherbooks_submit voice=%s lang=%s output=%s text_len=%s text_sha=%s seed_payload=%s seed_option=%s seed_source=%s sample_seed=%s reference_valid=%s reference_path=%s sample_size=%s sample_sha=%s prompt_text_len=%s prompt_text_sha=%s has_prompt_wav=%s has_reference_wav=%s cfg=%.3f steps=%s max_chunk_chars=%s",
+            "TTS_TRACE eutherbooks_submit voice=%s model_backend=%s lang=%s output=%s text_len=%s text_sha=%s seed_payload=%s seed_option=%s seed_source=%s sample_seed=%s reference_valid=%s reference_path=%s sample_size=%s sample_sha=%s prompt_text_len=%s prompt_text_sha=%s has_prompt_wav=%s has_reference_wav=%s cfg=%.3f steps=%s max_chunk_chars=%s",
             voice,
+            model_backend,
             language,
             output_path,
             len(text),
@@ -421,6 +429,17 @@ def backend_from_name(name: str) -> TtsBackend:
     if normalized in {"eutherlink", "vox", "voxcpm", "voxcpm2"}:
         return EutherLinkBackend()
     raise TtsError(f"Unknown TTS backend: {name}")
+
+
+def _eutherlink_model_backend(voice: str, option: Any) -> str:
+    if isinstance(option, str) and option.strip().lower() in {"voxcpm2", "dots.tts-soar"}:
+        return option.strip().lower()
+    return "dots.tts-soar" if voice.strip().lower().startswith("dots-soar-") else "voxcpm2"
+
+
+def _eutherlink_voice_id(voice: str) -> str:
+    value = voice.strip()
+    return value[len("dots-soar-") :] if value.lower().startswith("dots-soar-") else value
 
 
 def _eutherlink_stable_preset_seed(voice: str) -> int | None:

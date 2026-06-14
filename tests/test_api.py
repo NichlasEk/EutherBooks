@@ -22,7 +22,8 @@ def test_upload_book_endpoint_uses_name_query_param() -> None:
 
 
 
-def test_eutherlink_voices_include_matching_english_presets() -> None:
+def test_eutherlink_voices_include_matching_english_presets(monkeypatch) -> None:
+    monkeypatch.setenv("EUTHERBOOKS_TTS_BACKEND", "eutherlink")
     app = create_app()
     voices = next(route.endpoint for route in app.routes if isinstance(route, APIRoute) and route.path == "/voices")()
 
@@ -32,3 +33,14 @@ def test_eutherlink_voices_include_matching_english_presets() -> None:
     assert len(en_presets) == len(sv_presets)
     assert all(voice.default_seed for voice in sv_presets + en_presets)
     assert all(voice.default_length_scale for voice in sv_presets + en_presets)
+
+
+def test_eutherlink_voices_include_dots_model_choices(monkeypatch) -> None:
+    monkeypatch.setenv("EUTHERBOOKS_TTS_BACKEND", "eutherlink")
+    app = create_app()
+    voices = next(route.endpoint for route in app.routes if isinstance(route, APIRoute) and route.path == "/voices")()
+
+    dots_voices = [voice for voice in voices if voice.model_backend == "dots.tts-soar"]
+
+    assert {voice.id for voice in dots_voices} == {"dots-soar-own-sv", "dots-soar-own-en"}
+    assert all(voice.path.startswith("user:own-") for voice in dots_voices)

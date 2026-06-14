@@ -385,6 +385,9 @@ def _normalized_tts_options(options: dict[str, Any]) -> dict[str, Any]:
         normalized["voice_reference_path"] = reference_path
     if prompt_text:
         normalized["voice_prompt_text"] = prompt_text
+    model_backend = _clean_model_backend(options.get("model_backend"))
+    if model_backend:
+        normalized["model_backend"] = model_backend
     return normalized
 
 
@@ -403,6 +406,13 @@ def _clean_prompt_text(value: Any) -> str:
     if not isinstance(value, str):
         return ""
     return "".join(ch for ch in value.strip()[:500] if ch == "\t" or ord(ch) >= 32)
+
+
+def _clean_model_backend(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    normalized = value.strip().lower()
+    return normalized if normalized in {"voxcpm2", "dots.tts-soar"} else ""
 
 
 def _split_for_tts(text: str, max_chars: int = DEFAULT_MAX_CHARS_PER_AUDIO_FILE) -> list[str]:
