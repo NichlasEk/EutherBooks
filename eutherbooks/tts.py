@@ -169,6 +169,9 @@ class EutherLinkBackend(TtsBackend):
             payload["seed"] = preset_seed
         reference_path = _valid_voice_reference_path((options or {}).get("voice_reference_path"))
         prompt_text = _valid_voice_prompt_text((options or {}).get("voice_prompt_text"))
+        if voice_id in {"own-sv", "own-en"}:
+            reference_path = _own_voice_reference_path(voice_id, reference_path)
+            prompt_text = _own_voice_prompt_text(voice_id, prompt_text)
         sample_sha = ""
         sample_seed: int | None = None
         sample_size = 0
@@ -377,10 +380,31 @@ def _valid_voice_prompt_text(value: Any) -> str:
         return ""
     return "".join(ch for ch in value.strip()[:500] if ch == "\t" or ord(ch) >= 32)
 
-EUTHERLINK_PROMPT_TRANSCRIPTS = {
-    "Solen går långsamt upp över skogen. Jag läser den här texten med min naturliga berättarröst, tydligt och lugnt, så att varje ord hörs klart.",
-    "The morning light moves slowly across the room. I read this text in my natural narrator voice, clearly and calmly, so every word is easy to hear.",
+EUTHERLINK_PROMPT_TRANSCRIPT_BY_VOICE = {
+    "own-sv": "Solen går långsamt upp över skogen. Jag läser den här texten med min naturliga berättarröst, tydligt och lugnt, så att varje ord hörs klart.",
+    "own-en": "The morning light moves slowly across the room. I read this text in my natural narrator voice, clearly and calmly, so every word is easy to hear.",
 }
+EUTHERLINK_PROMPT_TRANSCRIPTS = set(EUTHERLINK_PROMPT_TRANSCRIPT_BY_VOICE.values())
+
+
+def _own_voice_reference_path(voice_id: str, reference_path: str) -> str:
+    expected_name = f"{voice_id}.wav"
+    if reference_path and Path(reference_path).name == expected_name:
+        return reference_path
+    root = Path(os.environ.get("EUTHERBOOKS_VOICE_REFERENCE_ROOT", "/home/nichlas/EutherOxide/.euther-host/user-data")).resolve()
+    fallback = root / "nichlas" / "eutherbooks" / "voices" / expected_name
+    if fallback.is_file():
+        return str(fallback)
+    return reference_path
+
+
+def _own_voice_prompt_text(voice_id: str, prompt_text: str) -> str:
+    expected = EUTHERLINK_PROMPT_TRANSCRIPT_BY_VOICE.get(voice_id, "")
+    if not expected:
+        return prompt_text
+    if not prompt_text or prompt_text in EUTHERLINK_PROMPT_TRANSCRIPTS:
+        return expected
+    return prompt_text
 
 
 def _use_eutherlink_prompt_transcript(prompt_text: str = "") -> bool:

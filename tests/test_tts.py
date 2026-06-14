@@ -348,3 +348,35 @@ def test_eutherlink_length_scale_one_skips_tempo(monkeypatch, tmp_path: Path) ->
 
     assert output.read_bytes() == b"wav"
     assert tempo_calls == []
+
+
+def test_eutherlink_dots_own_sv_overrides_stale_own_en_state(monkeypatch, tmp_path: Path) -> None:
+    sample_root = tmp_path / "user-data"
+    sample_sv = sample_root / "nichlas" / "eutherbooks" / "voices" / "own-sv.wav"
+    sample_en = sample_root / "nichlas" / "eutherbooks" / "voices" / "own-en.wav"
+    sample_sv.parent.mkdir(parents=True)
+    sample_sv.write_bytes(b"RIFF" + b"\0" * 4 + b"WAVE" + b"sv")
+    sample_en.write_bytes(b"RIFF" + b"\0" * 4 + b"WAVE" + b"en")
+    output = tmp_path / "out.wav"
+    captured: dict[str, object] = {}
+
+    monkeypatch.setenv("EUTHERBOOKS_VOICE_REFERENCE_ROOT", str(sample_root))
+    monkeypatch.setattr(tts, "_temporary_output_path", lambda path: tmp_path / ".out.tmp")
+    monkeypatch.setattr(tts, "_request_json", lambda url, payload, timeout: captured.update(payload or {}) or ({"status_url": "/status", "audio_url": "/audio", "status": "queued"} if payload is not None else {"status": "done", "audio_url": "/audio"}))
+    monkeypatch.setattr(tts, "_download_file", lambda url, output_path, timeout: output_path.write_bytes(b"wav"))
+
+    tts.EutherLinkBackend().synthesize(
+        "Hej",
+        output,
+        "sv",
+        "dots-soar-own-sv",
+        {
+            "voice_reference_path": str(sample_en),
+            "voice_prompt_text": tts.EUTHERLINK_PROMPT_TRANSCRIPT_BY_VOICE["own-en"],
+            "model_backend": "dots.tts-soar",
+        },
+    )
+
+    assert captured["prompt_text"] == tts.EUTHERLINK_PROMPT_TRANSCRIPT_BY_VOICE["own-sv"]
+    assert captured["prompt_wav_base64"] != ""
+    assert captured["reference_wav_base64"] != ""
