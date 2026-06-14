@@ -157,7 +157,7 @@ class EutherLinkBackend(TtsBackend):
                     "dots_num_steps": _clamped_int((options or {}).get("dots_num_steps"), 1, 50, 10),
                     "dots_guidance_scale": _clamped_float((options or {}).get("dots_guidance_scale"), 0.0, 5.0, 1.2),
                     "dots_speaker_scale": _clamped_float((options or {}).get("dots_speaker_scale"), 0.0, 5.0, 1.5),
-                    "dots_max_generate_length": _clamped_int((options or {}).get("dots_max_generate_length"), 128, 4096, 256),
+                    "dots_max_generate_length": _clamped_int((options or {}).get("dots_max_generate_length"), 128, 4096, 500),
                 }
             )
         seed = (options or {}).get("seed")

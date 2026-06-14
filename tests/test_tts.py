@@ -110,6 +110,31 @@ def test_eutherlink_own_voice_can_send_prompt_transcript_when_enabled(monkeypatc
     assert captured["prompt_text"] == "Detta sade jag i samplet."
 
 
+def test_eutherlink_dots_voice_defaults_to_longer_generate_length(monkeypatch, tmp_path: Path) -> None:
+    sample_root = tmp_path / "user-data"
+    sample = sample_root / "nichlas" / "eutherbooks" / "voices" / "own-sv.wav"
+    sample.parent.mkdir(parents=True)
+    sample.write_bytes(b"RIFF" + b"\0" * 4 + b"WAVE" + b"sample")
+    output = tmp_path / "out.wav"
+    captured: dict[str, object] = {}
+
+    monkeypatch.setenv("EUTHERBOOKS_VOICE_REFERENCE_ROOT", str(sample_root))
+    monkeypatch.setattr(tts, "_temporary_output_path", lambda path: tmp_path / ".out.tmp")
+    monkeypatch.setattr(tts, "_request_json", lambda url, payload, timeout: captured.update(payload or {}) or ({"status_url": "/status", "audio_url": "/audio", "status": "queued"} if payload is not None else {"status": "done", "audio_url": "/audio"}))
+    monkeypatch.setattr(tts, "_download_file", lambda url, output_path, timeout: output_path.write_bytes(b"wav"))
+
+    tts.EutherLinkBackend().synthesize(
+        "Hej",
+        output,
+        "sv",
+        "dots-soar-own-sv",
+        {"voice_reference_path": str(sample), "voice_prompt_text": "Detta sade jag i samplet."},
+    )
+
+    assert captured["model_backend"] == "dots.tts-soar"
+    assert captured["dots_max_generate_length"] == 500
+
+
 def test_eutherlink_dots_voice_sends_model_backend_and_prompt(monkeypatch, tmp_path: Path) -> None:
     sample_root = tmp_path / "user-data"
     sample = sample_root / "nichlas" / "eutherbooks" / "voices" / "own-sv.wav"

@@ -73,7 +73,7 @@ class CreateJobRequest(BaseModel):
     dots_num_steps: int | None = Field(default=None, ge=1, le=50, examples=[10])
     dots_guidance_scale: float | None = Field(default=None, ge=0.0, le=5.0, examples=[1.2])
     dots_speaker_scale: float | None = Field(default=None, ge=0.0, le=5.0, examples=[1.5])
-    dots_max_generate_length: int | None = Field(default=None, ge=128, le=4096, examples=[256])
+    dots_max_generate_length: int | None = Field(default=None, ge=128, le=4096, examples=[500])
     max_chunk_chars: int | None = Field(default=None, ge=120, le=1500, examples=[700])
     seed: int | None = Field(default=None, ge=0, le=2147483647, examples=[123456])
     voice_reference_path: str | None = Field(default=None, max_length=600)
