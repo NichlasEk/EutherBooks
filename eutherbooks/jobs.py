@@ -437,7 +437,7 @@ def _normalized_tts_options(options: dict[str, Any]) -> dict[str, Any]:
         "dots_num_steps": (1.0, 50.0),
         "dots_guidance_scale": (0.0, 5.0),
         "dots_speaker_scale": (0.0, 5.0),
-        "dots_max_generate_length": (128.0, 4096.0),
+        "dots_max_generate_length": (500.0, 4096.0),
         "max_chunk_chars": (120.0, 1500.0),
         "seed": (0.0, 2147483647.0),
     }
