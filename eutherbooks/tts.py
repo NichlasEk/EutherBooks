@@ -554,6 +554,12 @@ def _eutherlink_voice_instruction(voice: str) -> str:
         return f"{configured} {base}"
     return f"{value} {base}"
 
+def eutherlink_health() -> dict[str, Any]:
+    base_url = os.environ.get("EUTHERBOOKS_EUTHERLINK_URL", "http://192.168.32.88:8765").rstrip("/")
+    timeout = float(os.environ.get("EUTHERBOOKS_EUTHERLINK_TIMEOUT", "15"))
+    return _request_json(f"{base_url}/health", None, timeout)
+
+
 def _request_json(url: str, payload: dict[str, Any] | None, timeout: float) -> dict[str, Any]:
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     headers = {} if payload is None else {"Content-Type": "application/json"}

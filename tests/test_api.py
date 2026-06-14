@@ -44,3 +44,18 @@ def test_eutherlink_voices_include_dots_model_choices(monkeypatch) -> None:
 
     assert {voice.id for voice in dots_voices} == {"dots-soar-own-sv", "dots-soar-own-en"}
     assert all(voice.path.startswith("user:own-") for voice in dots_voices)
+
+def test_eutherlink_health_includes_dots_status(monkeypatch) -> None:
+    monkeypatch.setenv("EUTHERBOOKS_TTS_BACKEND", "eutherlink")
+    import eutherbooks.api as api_module
+
+    monkeypatch.setattr(
+        api_module,
+        "eutherlink_health",
+        lambda: {"ok": True, "dots_tts": {"status": "ready", "model_loaded": True}},
+    )
+    app = create_app()
+    health = next(route.endpoint for route in app.routes if isinstance(route, APIRoute) and route.path == "/health")()
+
+    assert health["tts_backend"] == "eutherlink"
+    assert health["dots_tts"] == {"status": "ready", "model_loaded": True}

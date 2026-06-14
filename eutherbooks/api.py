@@ -11,7 +11,7 @@ from .config import Settings
 from .jobs import JobStore, TtsQueue
 from .library import Library
 from .models import Book, Chapter, TtsJob
-from .tts import TtsError, backend_from_name
+from .tts import TtsError, backend_from_name, eutherlink_health
 
 
 class BookResponse(BaseModel):
@@ -167,8 +167,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return queue
 
     @app.get("/health")
-    def health() -> dict[str, str]:
-        return {"status": "ok", "tts_backend": backend.name}
+    def health() -> dict[str, object]:
+        payload: dict[str, object] = {"status": "ok", "tts_backend": backend.name}
+        if backend.name == "eutherlink":
+            try:
+                worker_health = eutherlink_health()
+            except TtsError as exc:
+                worker_health = {"ok": False, "error": str(exc)}
+            payload["eutherlink"] = worker_health
+            payload["dots_tts"] = worker_health.get("dots_tts") if isinstance(worker_health, dict) else None
+        return payload
 
     @app.get("/voices", response_model=list[VoiceResponse])
     def list_voices() -> list[VoiceResponse]:
