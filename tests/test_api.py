@@ -41,9 +41,23 @@ def test_eutherlink_voices_include_dots_model_choices(monkeypatch) -> None:
     voices = next(route.endpoint for route in app.routes if isinstance(route, APIRoute) and route.path == "/voices")()
 
     dots_voices = [voice for voice in voices if voice.model_backend in {"dots.tts-soar", "dots.tts-mf"}]
+    base_presets = {
+        voice.id
+        for voice in voices
+        if voice.model_backend == "voxcpm2" and voice.path.startswith("preset:") and voice.id != "custom"
+    }
+    mf_ids = {voice.id for voice in dots_voices if voice.model_backend == "dots.tts-mf"}
+    soar_ids = {voice.id for voice in dots_voices if voice.model_backend == "dots.tts-soar"}
 
-    assert {voice.id for voice in dots_voices} == {"dots-mf-own-sv", "dots-mf-own-en", "dots-soar-own-sv", "dots-soar-own-en"}
-    assert all(voice.path.startswith("user:own-") for voice in dots_voices)
+    assert {"dots-mf-own-sv", "dots-mf-own-en"} <= mf_ids
+    assert {"dots-soar-own-sv", "dots-soar-own-en"} <= soar_ids
+    assert {f"dots-mf-{voice_id}" for voice_id in base_presets} <= mf_ids
+    assert {f"dots-soar-{voice_id}" for voice_id in base_presets} <= soar_ids
+    assert all(voice.default_seed for voice in dots_voices if voice.path.startswith("preset:"))
+    voices_by_id = {voice.id: voice for voice in voices}
+    for voice_id in base_presets:
+        assert voices_by_id[f"dots-mf-{voice_id}"].default_seed == voices_by_id[voice_id].default_seed
+        assert voices_by_id[f"dots-soar-{voice_id}"].default_seed == voices_by_id[voice_id].default_seed
 
 def test_eutherlink_health_includes_dots_status(monkeypatch) -> None:
     monkeypatch.setenv("EUTHERBOOKS_TTS_BACKEND", "eutherlink")

@@ -417,7 +417,7 @@ def _append_pcm16_with_gap(left: array[int], right: array[int], channels: int, s
 
 
 def _eutherlink_voices() -> list[VoiceResponse]:
-    presets = [
+    base_presets = [
         ("sv-female-warm", "Warm female narrator", "sv", "preset:sv-female-warm", 1.15),
         ("sv-female-clear", "Clear female narrator", "sv", "preset:sv-female-clear", 1.12),
         ("sv-female-soft", "Soft female narrator", "sv", "preset:sv-female-soft", 1.20),
@@ -450,6 +450,17 @@ def _eutherlink_voices() -> list[VoiceResponse]:
         ("en-whisper", "English quiet bedtime voice", "en", "preset:en-whisper", 1.25),
         ("en-character-bright", "English bright character voice", "en", "preset:en-character-bright", 1.08),
         ("en-character-gritty", "English gritty character voice", "en", "preset:en-character-gritty", 1.18),
+    ]
+    presets = [
+        *base_presets,
+        *[
+            (f"dots-mf-{voice_id}", f"Dots MF {label}", language, path, length_scale)
+            for voice_id, label, language, path, length_scale in base_presets
+        ],
+        *[
+            (f"dots-soar-{voice_id}", f"Dots SOAR {label}", language, path, length_scale)
+            for voice_id, label, language, path, length_scale in base_presets
+        ],
         ("own-sv", "Your own voice SV", "sv", "user:own-sv", None),
         ("own-en", "Your own voice EN", "en", "user:own-en", None),
         ("dots-mf-own-sv", "Dots MF own voice SV", "sv", "user:own-sv", None),
@@ -467,14 +478,25 @@ def _eutherlink_voices() -> list[VoiceResponse]:
             path=path,
             model_backend="dots.tts-mf" if voice_id.startswith("dots-mf-") else ("dots.tts-soar" if voice_id.startswith("dots-soar-") else "voxcpm2"),
             default_length_scale=length_scale,
-            default_seed=_default_voice_seed(voice_id) if path.startswith("preset:") and voice_id != "custom" else None,
+            default_seed=_default_voice_seed(_base_voice_seed_id(voice_id)) if path.startswith("preset:") and voice_id != "custom" else None,
         )
         for voice_id, label, language, path, length_scale in presets
     ]
 
 
+def _base_voice_seed_id(voice_id: str) -> str:
+    normalized = voice_id.strip()
+    lower = normalized.lower()
+    if lower.startswith("dots-mf-"):
+        return normalized[len("dots-mf-") :]
+    if lower.startswith("dots-soar-"):
+        return normalized[len("dots-soar-") :]
+    return normalized
+
+
 def _default_voice_seed(voice_id: str) -> int:
-    digest = __import__("hashlib").sha256(f"eutherbooks:eutherlink:{voice_id}".encode("utf-8")).digest()
+    normalized = voice_id.strip().lower().replace("-", "_")
+    digest = __import__("hashlib").sha256(f"eutherbooks:eutherlink:{normalized}".encode("utf-8")).digest()
     return int.from_bytes(digest[:4], "big") & 0x7FFFFFFF
 
 

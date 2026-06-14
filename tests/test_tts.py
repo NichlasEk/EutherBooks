@@ -178,6 +178,30 @@ def test_eutherlink_dots_voice_sends_model_backend_and_prompt(monkeypatch, tmp_p
     assert captured["prompt_text"] == "Detta sade jag i samplet."
 
 
+def test_eutherlink_dots_preset_uses_seed_without_prompt_audio(monkeypatch, tmp_path: Path) -> None:
+    output = tmp_path / "out.wav"
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(tts, "_temporary_output_path", lambda path: tmp_path / ".out.tmp")
+    monkeypatch.setattr(tts, "_request_json", lambda url, payload, timeout: captured.update(payload or {}) or ({"status_url": "/status", "audio_url": "/audio", "status": "queued"} if payload is not None else {"status": "done", "audio_url": "/audio"}))
+    monkeypatch.setattr(tts, "_download_file", lambda url, output_path, timeout: output_path.write_bytes(b"wav"))
+
+    tts.EutherLinkBackend().synthesize(
+        "Hello",
+        output,
+        "en",
+        "dots-mf-en-female-deep",
+        {"model_backend": "dots.tts-mf"},
+    )
+
+    assert captured["model_backend"] == "dots.tts-mf"
+    assert captured["voice_instruction"]
+    assert captured["seed"] == tts._eutherlink_stable_preset_seed("en-female-deep")
+    assert "reference_wav_base64" not in captured
+    assert "prompt_wav_base64" not in captured
+    assert "prompt_text" not in captured
+
+
 def test_eutherlink_explicit_model_backend_option_wins(monkeypatch, tmp_path: Path) -> None:
     output = tmp_path / "out.wav"
     captured: dict[str, object] = {}

@@ -194,10 +194,10 @@ class EutherLinkBackend(TtsBackend):
             if prompt_text and (_is_dots_backend(model_backend) or _use_eutherlink_prompt_transcript(prompt_text)):
                 payload["prompt_wav_base64"] = sample_base64
                 payload["prompt_text"] = prompt_text
-        if _is_dots_backend(model_backend) and (
+        if _is_dots_backend(model_backend) and voice_id in {"own-sv", "own-en"} and (
             "prompt_wav_base64" not in payload or not payload.get("prompt_text")
         ):
-            raise TtsError(f"{model_backend} requires an own voice reference WAV and matching prompt text.")
+            raise TtsError(f"{model_backend} own voice requires a reference WAV and matching prompt text.")
 
         LOGGER.warning(
             "TTS_TRACE eutherbooks_submit voice=%s model_backend=%s lang=%s output=%s text_len=%s text_sha=%s seed_payload=%s seed_option=%s seed_source=%s sample_seed=%s reference_valid=%s reference_path=%s sample_size=%s sample_sha=%s prompt_text_len=%s prompt_text_sha=%s has_prompt_wav=%s has_reference_wav=%s cfg=%.3f steps=%s dots_guidance=%s dots_speaker=%s dots_steps=%s dots_max_len=%s max_chunk_chars=%s",
