@@ -127,7 +127,7 @@ class TtsQueue:
         total_audio_files = (
             max(1, pdf_page_count(book.path) - indexes[0] if book else 0)
             if pdf_remainder
-            else self._total_audio_files(chapters, indexes)
+            else self._total_audio_files(chapters, indexes, options)
         )
         existing = self.store.get(job_id)
         if existing and existing.status in {JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.DONE}:
@@ -155,9 +155,9 @@ class TtsQueue:
         thread.start()
         return job
 
-    def _total_audio_files(self, chapters: list[Chapter], indexes: list[int]) -> int:
+    def _total_audio_files(self, chapters: list[Chapter], indexes: list[int], options: dict[str, Any] | None = None) -> int:
         chapters_by_index = {chapter.index: chapter for chapter in chapters}
-        max_chars = _max_chars_for_backend(self.backend.name)
+        max_chars = _max_chars_for_options(self.backend.name, options or {})
         return sum(len(_split_for_tts(chapters_by_index[index].text, max_chars=max_chars)) for index in indexes)
 
     def _run_job(self, job_id: str) -> None:
@@ -178,13 +178,13 @@ class TtsQueue:
                     return
                 chapters = {chapter.index: chapter for chapter in self.library.chapters_for(job.book_id)}
                 audio_files: list[str] = []
-                total_chunks = self._total_audio_files(list(chapters.values()), job.chapter_indexes)
+                total_chunks = self._total_audio_files(list(chapters.values()), job.chapter_indexes, job.tts_options)
                 job.total_chunks = total_chunks
                 job.total_audio_files = max(job.total_audio_files, total_chunks)
                 self.store.put(job)
                 for chapter_index in job.chapter_indexes:
                     chapter = chapters[chapter_index]
-                    chunks = _split_for_tts(chapter.text, max_chars=_max_chars_for_backend(self.backend.name))
+                    chunks = _split_for_tts(chapter.text, max_chars=_max_chars_for_options(self.backend.name, job.tts_options))
                     for chunk_index, chunk in enumerate(chunks):
                         relative = Path(job.book_id) / job.id / f"{chapter_index:04d}-{chunk_index:03d}.wav"
                         output_path = self.audio_dir / relative
@@ -269,7 +269,7 @@ class TtsQueue:
         while True:
             chapters = [chapter for chapter in self.library.chapters_for(job.book_id) if chapter.index >= start_index]
             for chapter in chapters:
-                chunks = _split_for_tts(chapter.text, max_chars=_max_chars_for_backend(self.backend.name))
+                chunks = _split_for_tts(chapter.text, max_chars=_max_chars_for_options(self.backend.name, job.tts_options))
                 for chunk_index, chunk in enumerate(chunks):
                     relative = Path(job.book_id) / job.id / f"{chapter.index:04d}-{chunk_index:03d}.wav"
                     relative_posix = relative.as_posix()
@@ -379,6 +379,16 @@ def _max_chars_for_backend(backend_name: str) -> int:
         return max(200, int(os.environ.get(env_name, fallback)))
     except ValueError:
         return fallback
+
+
+def _max_chars_for_options(backend_name: str, options: dict[str, Any]) -> int:
+    default = _max_chars_for_backend(backend_name)
+    requested = options.get("max_chunk_chars")
+    try:
+        value = int(requested) if requested is not None else default
+    except (TypeError, ValueError):
+        value = default
+    return max(120, min(1500, value))
 
 
 def _stored_worker_progress(value: dict[str, Any]) -> float:
