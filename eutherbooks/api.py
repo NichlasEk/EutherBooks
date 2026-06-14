@@ -100,6 +100,7 @@ class JobResponse(BaseModel):
     voice: str
     chapter_indexes: list[int]
     audio_files: list[str]
+    audio_durations: list[float]
     total_audio_files: int
     tts_options: dict[str, float | int | str | bool]
     queue_remainder: bool
@@ -121,6 +122,7 @@ class JobResponse(BaseModel):
             voice=job.voice,
             chapter_indexes=job.chapter_indexes,
             audio_files=job.audio_files,
+            audio_durations=job.audio_durations,
             total_audio_files=job.total_audio_files,
             tts_options=job.tts_options,
             queue_remainder=job.queue_remainder,

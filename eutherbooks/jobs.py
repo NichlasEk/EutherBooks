@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import threading
+import wave
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable
@@ -83,6 +84,7 @@ class JobStore:
                 voice=value["voice"],
                 chapter_indexes=list(value["chapter_indexes"]),
                 audio_files=list(value.get("audio_files", [])),
+                audio_durations=_stored_audio_durations(value),
                 total_audio_files=int(value.get("total_audio_files", 0)),
                 tts_options=dict(value.get("tts_options", {})),
                 queue_remainder=bool(value.get("queue_remainder", False)),
@@ -178,6 +180,7 @@ class TtsQueue:
                     return
                 chapters = {chapter.index: chapter for chapter in self.library.chapters_for(job.book_id)}
                 audio_files: list[str] = []
+                audio_durations: list[float] = []
                 total_chunks = self._total_audio_files(list(chapters.values()), job.chapter_indexes, job.tts_options)
                 job.total_chunks = total_chunks
                 job.total_audio_files = max(job.total_audio_files, total_chunks)
@@ -228,7 +231,9 @@ class TtsQueue:
                                 ),
                             )
                         audio_files.append(relative.as_posix())
+                        audio_durations.append(_wav_duration_seconds(output_path))
                         job.audio_files = audio_files
+                        job.audio_durations = audio_durations
                         job.current_chunk_index = len(audio_files)
                         job.worker_progress = 0.0
                         self._set_progress(
@@ -238,6 +243,7 @@ class TtsQueue:
                         )
 
                 job.audio_files = audio_files
+                job.audio_durations = audio_durations
                 job.status = JobStatus.DONE
                 job.error = None
                 job.current_chunk_index = len(audio_files)
@@ -258,6 +264,7 @@ class TtsQueue:
         start_index = job.chapter_indexes[0] if job.chapter_indexes else 0
         total_pages = pdf_page_count(book.path)
         audio_files = list(job.audio_files)
+        audio_durations = list(job.audio_durations)
         seen_audio = set(audio_files)
         job.total_chunks = max(job.total_chunks, job.total_audio_files, total_pages - start_index)
         self._set_progress(
@@ -316,7 +323,9 @@ class TtsQueue:
                     if relative_posix not in seen_audio:
                         seen_audio.add(relative_posix)
                         audio_files.append(relative_posix)
+                        audio_durations.append(_wav_duration_seconds(output_path))
                         job.audio_files = audio_files
+                        job.audio_durations = audio_durations
                         job.total_audio_files = max(job.total_audio_files, len(audio_files), total_pages - start_index)
                         job.total_chunks = max(job.total_chunks, job.total_audio_files)
                         job.current_chunk_index = len(audio_files)
@@ -334,6 +343,7 @@ class TtsQueue:
             pdf_ocr_next_batch(book.path)
 
         job.audio_files = audio_files
+        job.audio_durations = audio_durations
         job.status = JobStatus.DONE
         job.error = None
         job.current_chunk_index = len(audio_files)
@@ -399,6 +409,31 @@ def _stored_worker_progress(value: dict[str, Any]) -> float:
     if progress != progress:
         return 0.0
     return min(1.0, max(0.0, progress))
+
+
+def _stored_audio_durations(value: dict[str, Any]) -> list[float]:
+    durations = value.get("audio_durations", [])
+    if not isinstance(durations, list):
+        return []
+    safe: list[float] = []
+    for duration in durations:
+        try:
+            seconds = float(duration)
+        except (TypeError, ValueError):
+            seconds = 0.0
+        safe.append(max(0.0, seconds) if seconds == seconds else 0.0)
+    return safe
+
+
+def _wav_duration_seconds(path: Path) -> float:
+    try:
+        with wave.open(str(path), "rb") as wav_file:
+            rate = wav_file.getframerate()
+            if rate <= 0:
+                return 0.0
+            return round(wav_file.getnframes() / rate, 3)
+    except (OSError, EOFError, wave.Error):
+        return 0.0
 
 
 def _stored_progress_label(value: dict[str, Any]) -> str:

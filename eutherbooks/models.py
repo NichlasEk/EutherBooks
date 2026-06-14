@@ -46,6 +46,7 @@ class TtsJob:
     voice: str
     chapter_indexes: list[int]
     audio_files: list[str] = field(default_factory=list)
+    audio_durations: list[float] = field(default_factory=list)
     total_audio_files: int = 0
     tts_options: dict[str, Any] = field(default_factory=dict)
     queue_remainder: bool = False
