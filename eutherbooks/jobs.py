@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import wave
 from dataclasses import asdict
@@ -556,18 +557,40 @@ def _split_for_tts(text: str, max_chars: int = DEFAULT_MAX_CHARS_PER_AUDIO_FILE)
     chunks: list[str] = []
     current: list[str] = []
     current_len = 0
-    for paragraph in paragraphs or [text]:
-        if current and current_len + len(paragraph) > max_chars:
-            chunks.append("\n".join(current))
-            current = []
-            current_len = 0
-        while len(paragraph) > max_chars:
-            chunks.append(paragraph[:max_chars])
-            paragraph = paragraph[max_chars:].strip()
-        if not paragraph:
-            continue
-        current.append(paragraph)
-        current_len += len(paragraph)
+    for paragraph in paragraphs or [text.strip()]:
+        for segment in _split_tts_segment(paragraph, max_chars):
+            separator_len = 1 if current else 0
+            if current and current_len + separator_len + len(segment) > max_chars:
+                chunks.append("\n".join(current))
+                current = []
+                current_len = 0
+                separator_len = 0
+            current.append(segment)
+            current_len += separator_len + len(segment)
     if current:
         chunks.append("\n".join(current))
     return chunks
+
+
+def _split_tts_segment(text: str, max_chars: int) -> list[str]:
+    remaining = text.strip()
+    chunks: list[str] = []
+    while len(remaining) > max_chars:
+        split_at = _best_tts_split_index(remaining, max_chars)
+        head = remaining[:split_at].strip()
+        if head:
+            chunks.append(head)
+        remaining = remaining[split_at:].strip()
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
+
+def _best_tts_split_index(text: str, max_chars: int) -> int:
+    window = text[:max_chars + 1]
+    min_index = max(1, int(max_chars * 0.45))
+    for pattern in (r"(?<=[.!?。！？])\s+", r"(?<=[,;:])\s+", r"\s+"):
+        matches = [match for match in re.finditer(pattern, window) if min_index <= match.end() <= max_chars]
+        if matches:
+            return matches[-1].end()
+    return max_chars

@@ -193,6 +193,20 @@ def test_split_for_tts_honors_max_chars() -> None:
     assert _split_for_tts("abcdef", max_chars=2) == ["ab", "cd", "ef"]
 
 
+def test_split_for_tts_prefers_sentence_and_word_boundaries() -> None:
+    text = (
+        "En gång hade de på Mårbacka en barnpiga, som hette Back-Kajsa. "
+        "Hon var gammal och hade varit med länge. "
+    ) * 4
+
+    chunks = _split_for_tts(text, max_chars=120)
+
+    assert " ".join(chunks).replace("\n", " ").replace("  ", " ") == text.strip()
+    assert all(len(chunk) <= 120 for chunk in chunks)
+    assert all(not chunk.endswith("Back-") for chunk in chunks)
+    assert all(not chunk.startswith("Kajsa") for chunk in chunks)
+
+
 def test_piper_uses_smaller_default_chunks(monkeypatch) -> None:
     monkeypatch.delenv("EUTHERBOOKS_PIPER_MAX_CHARS", raising=False)
     monkeypatch.delenv("EUTHERBOOKS_MAX_CHARS", raising=False)
