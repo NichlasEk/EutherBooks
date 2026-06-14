@@ -699,7 +699,7 @@ def _clean_dots_ode_method(value: Any) -> str:
 
 
 def _split_for_tts(text: str, max_chars: int = DEFAULT_MAX_CHARS_PER_AUDIO_FILE) -> list[str]:
-    paragraphs = [part.strip() for part in text.splitlines() if part.strip()]
+    paragraphs = _tts_paragraphs(text)
     chunks: list[str] = []
     current: list[str] = []
     current_len = 0
@@ -707,15 +707,27 @@ def _split_for_tts(text: str, max_chars: int = DEFAULT_MAX_CHARS_PER_AUDIO_FILE)
         for segment in _split_tts_segment(paragraph, max_chars):
             separator_len = 1 if current else 0
             if current and current_len + separator_len + len(segment) > max_chars:
-                chunks.append("\n".join(current))
+                chunks.append(" ".join(current))
                 current = []
                 current_len = 0
                 separator_len = 0
             current.append(segment)
             current_len += separator_len + len(segment)
     if current:
-        chunks.append("\n".join(current))
+        chunks.append(" ".join(current))
     return chunks
+
+
+def _tts_paragraphs(text: str) -> list[str]:
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    blocks = re.split(r"\n\s*\n+", normalized)
+    paragraphs: list[str] = []
+    for block in blocks:
+        paragraph = re.sub(r"[ \t]*\n[ \t]*", " ", block.strip())
+        paragraph = re.sub(r"[ \t]{2,}", " ", paragraph).strip()
+        if paragraph:
+            paragraphs.append(paragraph)
+    return paragraphs
 
 
 def _split_tts_segment(text: str, max_chars: int) -> list[str]:

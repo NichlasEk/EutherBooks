@@ -264,6 +264,23 @@ def test_split_for_tts_prefers_sentence_and_word_boundaries() -> None:
     assert all(not chunk.startswith("Kajsa") for chunk in chunks)
 
 
+def test_split_for_tts_normalizes_hard_wrapped_plain_text() -> None:
+    text = (
+        "En gång hade de på Mårbacka en barnpiga, som hette Back-Kajsa. Hon\n"
+        "var nog sina tre alnar lång, hon hade ett stort, grovt ansikte med\n"
+        "stränga, mörka drag.\n\n"
+        "Men det hade väl inte funnits någon annan att få."
+    )
+
+    chunks = _split_for_tts(text, max_chars=520)
+
+    assert chunks == [
+        "En gång hade de på Mårbacka en barnpiga, som hette Back-Kajsa. Hon "
+        "var nog sina tre alnar lång, hon hade ett stort, grovt ansikte med "
+        "stränga, mörka drag. Men det hade väl inte funnits någon annan att få."
+    ]
+
+
 def test_piper_uses_smaller_default_chunks(monkeypatch) -> None:
     monkeypatch.delenv("EUTHERBOOKS_PIPER_MAX_CHARS", raising=False)
     monkeypatch.delenv("EUTHERBOOKS_MAX_CHARS", raising=False)
