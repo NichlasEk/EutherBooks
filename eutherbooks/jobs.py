@@ -145,6 +145,7 @@ class TtsQueue:
         tts_options: dict[str, Any] | None = None,
         queue_remainder: bool = False,
         owner: str = "",
+        cancel_existing: bool = True,
     ) -> TtsJob:
         chapters = self.library.chapters_for(book_id)
         book = self.library.get_book(book_id)
@@ -170,10 +171,11 @@ class TtsQueue:
             if existing.total_audio_files <= 0:
                 existing.total_audio_files = total_audio_files
                 self.store.put(existing)
-            self.store.cancel_incomplete_for_owner(clean_owner, "Cancelled by a newer request from the same user.", existing.id)
+            if cancel_existing:
+                self.store.cancel_incomplete_for_owner(clean_owner, "Cancelled by a newer request from the same user.", existing.id)
             return existing
 
-        if clean_owner:
+        if clean_owner and cancel_existing:
             self.store.cancel_incomplete_for_owner(clean_owner, "Cancelled by a newer request from the same user.")
 
         job = TtsJob(

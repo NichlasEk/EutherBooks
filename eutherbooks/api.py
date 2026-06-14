@@ -62,6 +62,7 @@ class CreateJobRequest(BaseModel):
     voice: str | None = Field(default=None, examples=["sv"])
     model_backend: str | None = Field(default=None, examples=["voxcpm2"])
     owner: str | None = Field(default=None, max_length=120)
+    cancel_existing: bool = True
     chapters: list[int] | None = None
     length_scale: float | None = Field(default=None, examples=[1.0])
     noise_scale: float | None = Field(default=None, examples=[0.667])
@@ -270,6 +271,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "model_backend": request.model_backend,
                 },
                 queue_remainder=request.queue_remainder,
+                cancel_existing=request.cancel_existing,
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Book not found") from exc
