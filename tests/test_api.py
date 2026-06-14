@@ -40,9 +40,9 @@ def test_eutherlink_voices_include_dots_model_choices(monkeypatch) -> None:
     app = create_app()
     voices = next(route.endpoint for route in app.routes if isinstance(route, APIRoute) and route.path == "/voices")()
 
-    dots_voices = [voice for voice in voices if voice.model_backend == "dots.tts-soar"]
+    dots_voices = [voice for voice in voices if voice.model_backend in {"dots.tts-soar", "dots.tts-mf"}]
 
-    assert {voice.id for voice in dots_voices} == {"dots-soar-own-sv", "dots-soar-own-en"}
+    assert {voice.id for voice in dots_voices} == {"dots-mf-own-sv", "dots-mf-own-en", "dots-soar-own-sv", "dots-soar-own-en"}
     assert all(voice.path.startswith("user:own-") for voice in dots_voices)
 
 def test_eutherlink_health_includes_dots_status(monkeypatch) -> None:

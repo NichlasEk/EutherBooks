@@ -149,7 +149,7 @@ class EutherLinkBackend(TtsBackend):
             ),
             "max_chunk_chars": int((options or {}).get("max_chunk_chars") or os.environ.get("EUTHERBOOKS_EUTHERLINK_MAX_CHUNK_CHARS", "700")),
         }
-        if model_backend == "dots.tts-soar":
+        if _is_dots_backend(model_backend):
             payload.update(
                 {
                     "dots_template_name": _dots_template_name((options or {}).get("dots_template_name")),
@@ -191,13 +191,13 @@ class EutherLinkBackend(TtsBackend):
                 payload["seed"] = sample_seed
             sample_base64 = base64.b64encode(sample).decode("ascii")
             payload["reference_wav_base64"] = sample_base64
-            if prompt_text and (model_backend == "dots.tts-soar" or _use_eutherlink_prompt_transcript(prompt_text)):
+            if prompt_text and (_is_dots_backend(model_backend) or _use_eutherlink_prompt_transcript(prompt_text)):
                 payload["prompt_wav_base64"] = sample_base64
                 payload["prompt_text"] = prompt_text
-        if model_backend == "dots.tts-soar" and (
+        if _is_dots_backend(model_backend) and (
             "prompt_wav_base64" not in payload or not payload.get("prompt_text")
         ):
-            raise TtsError("dots.tts-soar requires an own voice reference WAV and matching prompt text.")
+            raise TtsError(f"{model_backend} requires an own voice reference WAV and matching prompt text.")
 
         LOGGER.warning(
             "TTS_TRACE eutherbooks_submit voice=%s model_backend=%s lang=%s output=%s text_len=%s text_sha=%s seed_payload=%s seed_option=%s seed_source=%s sample_seed=%s reference_valid=%s reference_path=%s sample_size=%s sample_sha=%s prompt_text_len=%s prompt_text_sha=%s has_prompt_wav=%s has_reference_wav=%s cfg=%.3f steps=%s dots_guidance=%s dots_speaker=%s dots_steps=%s dots_max_len=%s max_chunk_chars=%s",
@@ -606,14 +606,26 @@ def backend_from_name(name: str) -> TtsBackend:
 
 
 def _eutherlink_model_backend(voice: str, option: Any) -> str:
-    if isinstance(option, str) and option.strip().lower() in {"voxcpm2", "dots.tts-soar"}:
+    if isinstance(option, str) and option.strip().lower() in {"voxcpm2", "dots.tts-soar", "dots.tts-mf"}:
         return option.strip().lower()
-    return "dots.tts-soar" if voice.strip().lower().startswith("dots-soar-") else "voxcpm2"
+    normalized_voice = voice.strip().lower()
+    if normalized_voice.startswith("dots-mf-"):
+        return "dots.tts-mf"
+    return "dots.tts-soar" if normalized_voice.startswith("dots-soar-") else "voxcpm2"
+
+
+def _is_dots_backend(model_backend: str) -> bool:
+    return model_backend in {"dots.tts-soar", "dots.tts-mf"}
 
 
 def _eutherlink_voice_id(voice: str) -> str:
     value = voice.strip()
-    return value[len("dots-soar-") :] if value.lower().startswith("dots-soar-") else value
+    lower = value.lower()
+    if lower.startswith("dots-soar-"):
+        return value[len("dots-soar-") :]
+    if lower.startswith("dots-mf-"):
+        return value[len("dots-mf-") :]
+    return value
 
 
 def _eutherlink_stable_preset_seed(voice: str) -> int | None:

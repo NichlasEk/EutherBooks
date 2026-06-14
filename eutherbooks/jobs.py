@@ -679,7 +679,7 @@ def _clean_model_backend(value: Any) -> str:
     if not isinstance(value, str):
         return ""
     normalized = value.strip().lower()
-    return normalized if normalized in {"voxcpm2", "dots.tts-soar"} else ""
+    return normalized if normalized in {"voxcpm2", "dots.tts-soar", "dots.tts-mf"} else ""
 
 
 def _clean_dots_template_name(value: Any) -> str:

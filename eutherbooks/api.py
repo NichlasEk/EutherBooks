@@ -450,6 +450,8 @@ def _eutherlink_voices() -> list[VoiceResponse]:
         ("en-character-gritty", "English gritty character voice", "en", "preset:en-character-gritty", 1.18),
         ("own-sv", "Your own voice SV", "sv", "user:own-sv", None),
         ("own-en", "Your own voice EN", "en", "user:own-en", None),
+        ("dots-mf-own-sv", "Dots MF own voice SV", "sv", "user:own-sv", None),
+        ("dots-mf-own-en", "Dots MF own voice EN", "en", "user:own-en", None),
         ("dots-soar-own-sv", "Dots SOAR own voice SV", "sv", "user:own-sv", None),
         ("dots-soar-own-en", "Dots SOAR own voice EN", "en", "user:own-en", None),
         ("custom", "Custom voice prompt", "sv", "preset:custom", None),
@@ -461,7 +463,7 @@ def _eutherlink_voices() -> list[VoiceResponse]:
             language=language,
             backend="eutherlink",
             path=path,
-            model_backend="dots.tts-soar" if voice_id.startswith("dots-soar-") else "voxcpm2",
+            model_backend="dots.tts-mf" if voice_id.startswith("dots-mf-") else ("dots.tts-soar" if voice_id.startswith("dots-soar-") else "voxcpm2"),
             default_length_scale=length_scale,
             default_seed=_default_voice_seed(voice_id) if path.startswith("preset:") and voice_id != "custom" else None,
         )
