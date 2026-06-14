@@ -342,7 +342,7 @@ def _write_smoothed_combined_wav(source_paths: list[Path], output_path: Path) ->
         if comparable != first_comparable:
             raise ValueError("Audio parts use incompatible WAV formats")
         samples = _trim_leading_pcm16_silence(samples, params.nchannels, params.framerate)
-        combined = _crossfade_pcm16(combined or array("h"), samples, params.nchannels, params.framerate)
+        combined = _append_pcm16_with_gap(combined or array("h"), samples, params.nchannels, params.framerate)
 
     if first_params is None or combined is None:
         raise ValueError("No audio parts to combine")
@@ -366,9 +366,9 @@ def _read_pcm16_wav(path: Path) -> tuple[wave._wave_params, array[int]]:
 def _trim_leading_pcm16_silence(samples: array[int], channels: int, sample_rate: int) -> array[int]:
     if not samples:
         return samples
-    max_trim_frames = min(len(samples) // channels, int(sample_rate * 0.32))
-    window_frames = max(1, int(sample_rate * 0.02))
-    threshold = 260
+    max_trim_frames = min(len(samples) // channels, int(sample_rate * 0.12))
+    window_frames = max(1, int(sample_rate * 0.01))
+    threshold = 90
     trim_frames = 0
     while trim_frames + window_frames <= max_trim_frames:
         start = trim_frames * channels
@@ -385,26 +385,15 @@ def _trim_leading_pcm16_silence(samples: array[int], channels: int, sample_rate:
     return samples[trim_frames * channels :]
 
 
-def _crossfade_pcm16(left: array[int], right: array[int], channels: int, sample_rate: int) -> array[int]:
+def _append_pcm16_with_gap(left: array[int], right: array[int], channels: int, sample_rate: int) -> array[int]:
     if not left:
         return right
     if not right:
         return left
-    fade_frames = min(int(sample_rate * 0.075), len(left) // channels, len(right) // channels)
-    if fade_frames <= 0:
-        return left + right
-    fade_samples = fade_frames * channels
-    out = array("h", left[:-fade_samples])
-    left_tail = left[-fade_samples:]
-    right_head = right[:fade_samples]
-    for frame in range(fade_frames):
-        right_weight = (frame + 1) / fade_frames
-        left_weight = 1.0 - right_weight
-        for channel in range(channels):
-            sample_index = frame * channels + channel
-            mixed = int(left_tail[sample_index] * left_weight + right_head[sample_index] * right_weight)
-            out.append(max(-32768, min(32767, mixed)))
-    out.extend(right[fade_samples:])
+    out = array("h", left)
+    gap_frames = int(sample_rate * 0.045)
+    out.extend([0] * gap_frames * channels)
+    out.extend(right)
     return out
 
 
