@@ -104,6 +104,7 @@ class JobResponse(BaseModel):
     progress_detail: str
     current_chapter_index: int | None
     current_chunk_index: int
+    worker_progress: float
     total_chunks: int
     error: str | None
 
@@ -124,6 +125,7 @@ class JobResponse(BaseModel):
             progress_detail=job.progress_detail,
             current_chapter_index=job.current_chapter_index,
             current_chunk_index=job.current_chunk_index,
+            worker_progress=job.worker_progress,
             total_chunks=job.total_chunks,
             error=job.error,
         )

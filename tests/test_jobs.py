@@ -22,6 +22,7 @@ class RecordingBackend(TtsBackend):
         language: str,
         voice: str,
         options: dict[str, object] | None = None,
+        progress_callback: object | None = None,
     ) -> None:
         self.calls += 1
         output_path.parent.mkdir(parents=True, exist_ok=True)

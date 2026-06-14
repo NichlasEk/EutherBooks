@@ -53,5 +53,6 @@ class TtsJob:
     progress_detail: str = ""
     current_chapter_index: int | None = None
     current_chunk_index: int = 0
+    worker_progress: float = 0.0
     total_chunks: int = 0
     error: str | None = None

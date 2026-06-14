@@ -7,7 +7,7 @@ import os
 import threading
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .ids import stable_job_id
 from .extractors import pdf_ocr_cached_page_count, pdf_ocr_next_batch, pdf_page_count
@@ -63,6 +63,7 @@ class JobStore:
                     job.error = reason
                     job.progress_label = "Interrupted"
                     job.progress_detail = reason
+                    job.worker_progress = 0.0
                     changed = True
             if changed:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -89,6 +90,7 @@ class JobStore:
                 progress_detail=str(value.get("progress_detail") or _stored_progress_detail(value)),
                 current_chapter_index=value.get("current_chapter_index"),
                 current_chunk_index=int(value.get("current_chunk_index", 0)),
+                worker_progress=_stored_worker_progress(value),
                 total_chunks=int(value.get("total_chunks", 0)),
                 error=value.get("error"),
             )
@@ -188,6 +190,7 @@ class TtsQueue:
                         output_path = self.audio_dir / relative
                         job.current_chapter_index = chapter_index
                         job.current_chunk_index = len(audio_files)
+                        job.worker_progress = 0.0
                         self._set_progress(
                             job,
                             "Synthesizing speech",
@@ -210,10 +213,24 @@ class TtsQueue:
                             _short_sha256(chunk.encode("utf-8")),
                         )
                         if not output_path.exists() or output_path.stat().st_size == 0:
-                            self.backend.synthesize(chunk, output_path, job.language, job.voice, job.tts_options)
+                            self.backend.synthesize(
+                                chunk,
+                                output_path,
+                                job.language,
+                                job.voice,
+                                job.tts_options,
+                                progress_callback=self._worker_progress_callback(
+                                    job,
+                                    "Synthesizing speech",
+                                    f"{chapter.title}: part {chunk_index + 1}/{len(chunks)} ({len(audio_files) + 1}/{total_chunks})",
+                                    lambda: len(audio_files),
+                                    chapter_index,
+                                ),
+                            )
                         audio_files.append(relative.as_posix())
                         job.audio_files = audio_files
                         job.current_chunk_index = len(audio_files)
+                        job.worker_progress = 0.0
                         self._set_progress(
                             job,
                             "Audio ready",
@@ -224,10 +241,12 @@ class TtsQueue:
                 job.status = JobStatus.DONE
                 job.error = None
                 job.current_chunk_index = len(audio_files)
+                job.worker_progress = 0.0
                 self._set_progress(job, "Ready", f"{len(audio_files)} {_audio_file_word(len(audio_files))} generated.")
             except Exception as exc:  # noqa: BLE001
                 job.status = JobStatus.FAILED
                 job.error = str(exc)
+                job.worker_progress = 0.0
                 self._set_progress(job, "Failed", str(exc))
             finally:
                 self.store.put(job)
@@ -257,6 +276,7 @@ class TtsQueue:
                     output_path = self.audio_dir / relative
                     job.current_chapter_index = chapter.index
                     job.current_chunk_index = len(audio_files)
+                    job.worker_progress = 0.0
                     self._set_progress(
                         job,
                         "Synthesizing PDF speech",
@@ -279,7 +299,20 @@ class TtsQueue:
                         _short_sha256(chunk.encode("utf-8")),
                     )
                     if not output_path.exists() or output_path.stat().st_size == 0:
-                        self.backend.synthesize(chunk, output_path, job.language, job.voice, job.tts_options)
+                        self.backend.synthesize(
+                            chunk,
+                            output_path,
+                            job.language,
+                            job.voice,
+                            job.tts_options,
+                            progress_callback=self._worker_progress_callback(
+                                job,
+                                "Synthesizing PDF speech",
+                                f"Page {chapter.index + 1}, part {chunk_index + 1}/{len(chunks)}; {len(audio_files)}/{max(job.total_audio_files, len(audio_files) + 1)} ready.",
+                                lambda: len(audio_files),
+                                chapter.index,
+                            ),
+                        )
                     if relative_posix not in seen_audio:
                         seen_audio.add(relative_posix)
                         audio_files.append(relative_posix)
@@ -287,6 +320,7 @@ class TtsQueue:
                         job.total_audio_files = max(job.total_audio_files, len(audio_files), total_pages - start_index)
                         job.total_chunks = max(job.total_chunks, job.total_audio_files)
                         job.current_chunk_index = len(audio_files)
+                        job.worker_progress = 0.0
                         self._set_progress(
                             job,
                             "PDF audio ready",
@@ -303,7 +337,30 @@ class TtsQueue:
         job.status = JobStatus.DONE
         job.error = None
         job.current_chunk_index = len(audio_files)
+        job.worker_progress = 0.0
         self._set_progress(job, "Ready", f"{len(audio_files)} {_audio_file_word(len(audio_files))} generated.")
+
+    def _worker_progress_callback(
+        self,
+        job: TtsJob,
+        label: str,
+        base_detail: str,
+        ready_count: Callable[[], int],
+        chapter_index: int,
+    ) -> Callable[[dict[str, Any]], None]:
+        def update(status: dict[str, Any]) -> None:
+            progress = _stored_worker_progress(status)
+            message = str(status.get("message") or "").strip()
+            job.worker_progress = progress
+            job.current_chapter_index = chapter_index
+            job.current_chunk_index = ready_count()
+            percent = round(progress * 100)
+            detail = f"{base_detail}; worker {percent}%"
+            if message:
+                detail = f"{detail} - {message}"
+            self._set_progress(job, label, detail)
+
+        return update
 
     def _set_progress(self, job: TtsJob, label: str, detail: str = "") -> None:
         job.progress_label = label
@@ -322,6 +379,16 @@ def _max_chars_for_backend(backend_name: str) -> int:
         return max(200, int(os.environ.get(env_name, fallback)))
     except ValueError:
         return fallback
+
+
+def _stored_worker_progress(value: dict[str, Any]) -> float:
+    try:
+        progress = float(value.get("worker_progress", value.get("progress", 0.0)) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if progress != progress:
+        return 0.0
+    return min(1.0, max(0.0, progress))
 
 
 def _stored_progress_label(value: dict[str, Any]) -> str:

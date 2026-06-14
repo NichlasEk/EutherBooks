@@ -12,7 +12,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from shutil import which
-from typing import Any
+from typing import Any, Callable
 
 
 LOGGER = logging.getLogger("eutherbooks.tts")
@@ -20,6 +20,9 @@ LOGGER = logging.getLogger("eutherbooks.tts")
 
 class TtsError(RuntimeError):
     pass
+
+
+ProgressCallback = Callable[[dict[str, Any]], None]
 
 
 class TtsBackend:
@@ -32,6 +35,7 @@ class TtsBackend:
         language: str,
         voice: str,
         options: dict[str, Any] | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> None:
         raise NotImplementedError
 
@@ -46,6 +50,7 @@ class EspeakBackend(TtsBackend):
         language: str,
         voice: str,
         options: dict[str, Any] | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> None:
         binary = which("espeak-ng") or which("espeak")
         if binary is None:
@@ -76,6 +81,7 @@ class PiperBackend(TtsBackend):
         language: str,
         voice: str,
         options: dict[str, Any] | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> None:
         binary = _piper_binary()
         if binary is None:
@@ -119,6 +125,7 @@ class EutherLinkBackend(TtsBackend):
         language: str,
         voice: str,
         options: dict[str, Any] | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> None:
         base_url = os.environ.get("EUTHERBOOKS_EUTHERLINK_URL", "http://192.168.32.88:8765").rstrip("/")
         timeout = float(os.environ.get("EUTHERBOOKS_EUTHERLINK_TIMEOUT", "15"))
@@ -226,6 +233,8 @@ class EutherLinkBackend(TtsBackend):
                     raise TtsError("EutherLink TTS job timed out.")
                 time.sleep(poll_interval)
                 status = _request_json(status_url, None, timeout)
+                if progress_callback is not None:
+                    progress_callback(status)
 
             if status.get("status") != "done":
                 raise TtsError(str(status.get("error") or status.get("message") or "EutherLink TTS job failed."))
