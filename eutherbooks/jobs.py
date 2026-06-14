@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import threading
+import time
 import wave
 from dataclasses import asdict
 from pathlib import Path
@@ -95,6 +96,7 @@ class JobStore:
                 current_chunk_index=int(value.get("current_chunk_index", 0)),
                 worker_progress=_stored_worker_progress(value),
                 total_chunks=int(value.get("total_chunks", 0)),
+                perf=dict(value.get("perf", {})) if isinstance(value.get("perf"), dict) else {},
                 error=value.get("error"),
             )
             for job_id, value in raw.items()
@@ -219,6 +221,7 @@ class TtsQueue:
                         )
                         if not output_path.exists() or output_path.stat().st_size == 0:
                             partials_before = len(audio_files)
+                            part_started = time.perf_counter()
                             self.backend.synthesize(
                                 chunk,
                                 output_path,
@@ -240,6 +243,12 @@ class TtsQueue:
                                         total_chunks,
                                     ),
                                 ),
+                            )
+                            job.perf.update(
+                                {
+                                    "eutherbooks_part_sec": time.perf_counter() - part_started,
+                                    "eutherbooks_part_output_bytes": output_path.stat().st_size if output_path.exists() else 0,
+                                }
                             )
                             if len(audio_files) > partials_before:
                                 continue
@@ -389,6 +398,15 @@ class TtsQueue:
         def update(status: dict[str, Any]) -> None:
             if partial_publisher is not None:
                 partial_publisher(status)
+            perf = status.get("perf")
+            if isinstance(perf, dict):
+                job.perf.update(
+                    {
+                        f"worker_{key}": value
+                        for key, value in perf.items()
+                        if isinstance(key, str) and isinstance(value, (str, int, float, bool))
+                    }
+                )
             progress = _stored_worker_progress(status)
             message = str(status.get("message") or "").strip()
             job.worker_progress = progress
@@ -424,6 +442,13 @@ class TtsQueue:
             audio_files.append(relative)
             audio_durations.append(_wav_duration_seconds(path))
             changed = True
+            job.perf.update(
+                {
+                    "eutherbooks_partial_count": len(audio_files),
+                    "eutherbooks_last_partial_bytes": path.stat().st_size,
+                    "eutherbooks_last_partial_duration_sec": audio_durations[-1],
+                }
+            )
         if not changed:
             return
         job.audio_files = audio_files

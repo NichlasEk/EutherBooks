@@ -56,4 +56,5 @@ class TtsJob:
     current_chunk_index: int = 0
     worker_progress: float = 0.0
     total_chunks: int = 0
+    perf: dict[str, Any] = field(default_factory=dict)
     error: str | None = None

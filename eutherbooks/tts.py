@@ -232,8 +232,12 @@ class EutherLinkBackend(TtsBackend):
         temp_output = _temporary_output_path(output_path)
         length_scale = _eutherlink_length_scale((options or {}).get("length_scale"))
         downloaded_partials: dict[str, Path] = {}
+        synth_started = time.perf_counter()
+        poll_count = 0
+        first_partial_sec: float | None = None
 
         def publish_partials(status_payload: dict[str, Any]) -> None:
+            nonlocal first_partial_sec
             changed = False
             for value in status_payload.get("partial_audio_urls") or []:
                 partial_url = _absolute_worker_url(base_url, str(value))
@@ -242,29 +246,58 @@ class EutherLinkBackend(TtsBackend):
                 partial_path = output_path.with_name(f"{output_path.stem}.stream-{len(downloaded_partials) + 1:03d}.wav")
                 temp_partial = _temporary_output_path(partial_path)
                 try:
+                    download_started = time.perf_counter()
                     _download_file(partial_url, temp_partial, timeout)
+                    partial_download_sec = time.perf_counter() - download_started
                     if abs(length_scale - 1.0) > 0.001:
+                        tempo_started = time.perf_counter()
                         _apply_eutherlink_length_scale(temp_partial, length_scale)
+                        partial_tempo_sec = time.perf_counter() - tempo_started
+                    else:
+                        partial_tempo_sec = 0.0
                     os.replace(temp_partial, partial_path)
                 finally:
                     temp_partial.unlink(missing_ok=True)
                 downloaded_partials[partial_url] = partial_path
+                if first_partial_sec is None:
+                    first_partial_sec = time.perf_counter() - synth_started
                 changed = True
                 LOGGER.warning(
-                    "TTS_TRACE eutherbooks_partial_download output=%s worker_job=%s partial=%s bytes=%s",
+                    "TTS_TRACE eutherbooks_partial_download output=%s worker_job=%s partial=%s bytes=%s download_sec=%.3f tempo_sec=%.3f since_submit_sec=%.3f",
                     output_path,
                     status_payload.get("id") or job.get("id"),
                     partial_path,
                     partial_path.stat().st_size if partial_path.exists() else 0,
+                    partial_download_sec,
+                    partial_tempo_sec,
+                    time.perf_counter() - synth_started,
                 )
             if progress_callback is not None:
                 update = dict(status_payload)
                 update["partial_audio_paths"] = [str(path) for path in downloaded_partials.values()]
+                perf = dict(update.get("perf") or {}) if isinstance(update.get("perf"), dict) else {}
+                perf.update(
+                    {
+                        "eutherbooks_backend_elapsed_sec": time.perf_counter() - synth_started,
+                        "eutherbooks_poll_count": poll_count,
+                        "eutherbooks_downloaded_partial_count": len(downloaded_partials),
+                    }
+                )
+                if first_partial_sec is not None:
+                    perf["eutherbooks_first_partial_sec"] = first_partial_sec
+                update["perf"] = perf
                 progress_callback(update)
 
         try:
+            submit_started = time.perf_counter()
             job = _request_json(f"{base_url}/v1/tts/jobs", payload, timeout)
-            LOGGER.warning("TTS_TRACE eutherbooks_worker_accepted output=%s worker_job=%s", output_path, job.get("id"))
+            submit_sec = time.perf_counter() - submit_started
+            LOGGER.warning(
+                "TTS_TRACE eutherbooks_worker_accepted output=%s worker_job=%s submit_sec=%.3f",
+                output_path,
+                job.get("id"),
+                submit_sec,
+            )
             status_url = _absolute_worker_url(base_url, str(job["status_url"]))
 
             deadline = time.monotonic() + float(os.environ.get("EUTHERBOOKS_EUTHERLINK_JOB_TIMEOUT", "1800"))
@@ -273,7 +306,20 @@ class EutherLinkBackend(TtsBackend):
                 if time.monotonic() > deadline:
                     raise TtsError("EutherLink TTS job timed out.")
                 time.sleep(poll_interval)
+                poll_count += 1
+                poll_started = time.perf_counter()
                 status = _request_json(status_url, None, timeout)
+                poll_sec = time.perf_counter() - poll_started
+                perf = dict(status.get("perf") or {}) if isinstance(status.get("perf"), dict) else {}
+                perf.update(
+                    {
+                        "eutherbooks_submit_sec": submit_sec,
+                        "eutherbooks_last_poll_sec": poll_sec,
+                        "eutherbooks_poll_count": poll_count,
+                        "eutherbooks_backend_elapsed_sec": time.perf_counter() - synth_started,
+                    }
+                )
+                status["perf"] = perf
                 publish_partials(status)
 
             if status.get("status") != "done":
@@ -281,23 +327,46 @@ class EutherLinkBackend(TtsBackend):
             publish_partials(status)
 
             audio_url = _absolute_worker_url(base_url, str(status.get("audio_url") or job["audio_url"]))
+            final_download_started = time.perf_counter()
             _download_file(audio_url, temp_output, timeout)
+            final_download_sec = time.perf_counter() - final_download_started
             LOGGER.warning(
-                "TTS_TRACE eutherbooks_download output=%s worker_job=%s bytes=%s",
+                "TTS_TRACE eutherbooks_download output=%s worker_job=%s bytes=%s download_sec=%.3f total_sec=%.3f",
                 output_path,
                 job.get("id"),
                 temp_output.stat().st_size if temp_output.exists() else 0,
+                final_download_sec,
+                time.perf_counter() - synth_started,
             )
             if abs(length_scale - 1.0) > 0.001:
+                tempo_started = time.perf_counter()
                 _apply_eutherlink_length_scale(temp_output, length_scale)
+                tempo_sec = time.perf_counter() - tempo_started
                 LOGGER.warning(
-                    "TTS_TRACE eutherbooks_tempo output=%s worker_job=%s length_scale=%.3f atempo=%.6f bytes=%s",
+                    "TTS_TRACE eutherbooks_tempo output=%s worker_job=%s length_scale=%.3f atempo=%.6f bytes=%s tempo_sec=%.3f",
                     output_path,
                     job.get("id"),
                     length_scale,
                     1.0 / length_scale,
                     temp_output.stat().st_size if temp_output.exists() else 0,
+                    tempo_sec,
                 )
+            else:
+                tempo_sec = 0.0
+            if progress_callback is not None:
+                final_update = dict(status)
+                perf = dict(final_update.get("perf") or {}) if isinstance(final_update.get("perf"), dict) else {}
+                perf.update(
+                    {
+                        "eutherbooks_final_download_sec": final_download_sec,
+                        "eutherbooks_final_tempo_sec": tempo_sec,
+                        "eutherbooks_total_backend_sec": time.perf_counter() - synth_started,
+                        "eutherbooks_final_bytes": temp_output.stat().st_size if temp_output.exists() else 0,
+                    }
+                )
+                final_update["perf"] = perf
+                final_update["partial_audio_paths"] = [str(path) for path in downloaded_partials.values()]
+                progress_callback(final_update)
             os.replace(temp_output, output_path)
         finally:
             temp_output.unlink(missing_ok=True)

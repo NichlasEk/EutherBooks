@@ -110,6 +110,7 @@ class JobResponse(BaseModel):
     current_chunk_index: int
     worker_progress: float
     total_chunks: int
+    perf: dict[str, float | int | str | bool]
     error: str | None
 
     @classmethod
@@ -132,6 +133,11 @@ class JobResponse(BaseModel):
             current_chunk_index=job.current_chunk_index,
             worker_progress=job.worker_progress,
             total_chunks=job.total_chunks,
+            perf={
+                key: value
+                for key, value in job.perf.items()
+                if isinstance(key, str) and isinstance(value, (str, int, float, bool))
+            },
             error=job.error,
         )
 
