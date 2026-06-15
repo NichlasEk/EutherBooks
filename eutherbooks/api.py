@@ -118,6 +118,11 @@ class JobResponse(BaseModel):
 
     @classmethod
     def from_job(cls, job: TtsJob) -> "JobResponse":
+        playable_audio = [
+            (audio_path, job.audio_durations[index] if index < len(job.audio_durations) else 0.0)
+            for index, audio_path in enumerate(job.audio_files)
+            if ".stream-" not in audio_path
+        ]
         return cls(
             id=job.id,
             book_id=job.book_id,
@@ -126,8 +131,8 @@ class JobResponse(BaseModel):
             voice=job.voice,
             chapter_indexes=job.chapter_indexes,
             owner=job.owner,
-            audio_files=job.audio_files,
-            audio_durations=job.audio_durations,
+            audio_files=[audio_path for audio_path, _duration in playable_audio],
+            audio_durations=[duration for _audio_path, duration in playable_audio],
             total_audio_files=job.total_audio_files,
             tts_options=job.tts_options,
             queue_remainder=job.queue_remainder,
@@ -295,9 +300,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         job = job_store.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found")
-        if not job.audio_files:
+        audio_files = [audio_path for audio_path in job.audio_files if ".stream-" not in audio_path]
+        if not audio_files:
             raise HTTPException(status_code=404, detail="Audio not found")
-        source_paths = [_resolve_audio_path(settings.audio_dir, audio_path) for audio_path in job.audio_files]
+        source_paths = [_resolve_audio_path(settings.audio_dir, audio_path) for audio_path in audio_files]
         missing = [path for path in source_paths if not path.exists()]
         if missing:
             raise HTTPException(status_code=404, detail="Audio not found")

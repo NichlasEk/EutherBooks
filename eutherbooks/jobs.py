@@ -472,31 +472,26 @@ class TtsQueue:
         status: dict[str, Any],
         total_hint: int,
     ) -> None:
-        changed = False
+        latest_partial: Path | None = None
         for value in status.get("partial_audio_paths") or []:
             path = Path(str(value))
             try:
-                relative = path.relative_to(self.audio_dir).as_posix()
+                path.relative_to(self.audio_dir)
             except ValueError:
                 continue
-            if relative in seen_audio or not path.exists() or path.stat().st_size <= 0:
+            if not path.exists() or path.stat().st_size <= 0:
                 continue
-            seen_audio.add(relative)
-            audio_files.append(relative)
-            audio_durations.append(_wav_duration_seconds(path))
-            changed = True
-            job.perf.update(
-                {
-                    "eutherbooks_partial_count": len(audio_files),
-                    "eutherbooks_last_partial_bytes": path.stat().st_size,
-                    "eutherbooks_last_partial_duration_sec": audio_durations[-1],
-                }
-            )
-        if not changed:
+            latest_partial = path
+        if latest_partial is None:
             return
-        job.audio_files = audio_files
-        job.audio_durations = audio_durations
-        job.total_audio_files = max(job.total_audio_files, len(audio_files), total_hint)
+        job.perf.update(
+            {
+                "eutherbooks_partial_count": len([path for path in audio_files if ".stream-" in path]),
+                "eutherbooks_last_partial_bytes": latest_partial.stat().st_size,
+                "eutherbooks_last_partial_duration_sec": _wav_duration_seconds(latest_partial),
+            }
+        )
+        job.total_audio_files = max(job.total_audio_files, total_hint)
         job.total_chunks = max(job.total_chunks, job.total_audio_files)
         job.current_chunk_index = len(audio_files)
         self.store.put(job)
