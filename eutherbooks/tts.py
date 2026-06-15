@@ -235,6 +235,7 @@ class EutherLinkBackend(TtsBackend):
         synth_started = time.perf_counter()
         poll_count = 0
         first_partial_sec: float | None = None
+        worker_job_id: str | None = None
 
         def publish_partials(status_payload: dict[str, Any]) -> None:
             nonlocal first_partial_sec
@@ -291,6 +292,7 @@ class EutherLinkBackend(TtsBackend):
         try:
             submit_started = time.perf_counter()
             job = _request_json(f"{base_url}/v1/tts/jobs", payload, timeout)
+            worker_job_id = str(job.get("id") or "").strip() or None
             submit_sec = time.perf_counter() - submit_started
             LOGGER.warning(
                 "TTS_TRACE eutherbooks_worker_accepted output=%s worker_job=%s submit_sec=%.3f",
@@ -368,6 +370,10 @@ class EutherLinkBackend(TtsBackend):
                 final_update["partial_audio_paths"] = [str(path) for path in downloaded_partials.values()]
                 progress_callback(final_update)
             os.replace(temp_output, output_path)
+        except Exception:
+            if worker_job_id is not None:
+                _cancel_eutherlink_job(base_url, worker_job_id, timeout)
+            raise
         finally:
             temp_output.unlink(missing_ok=True)
 
@@ -711,15 +717,22 @@ def eutherlink_health() -> dict[str, Any]:
     return _request_json(f"{base_url}/health", None, timeout)
 
 
-def _request_json(url: str, payload: dict[str, Any] | None, timeout: float) -> dict[str, Any]:
+def _request_json(url: str, payload: dict[str, Any] | None, timeout: float, method: str | None = None) -> dict[str, Any]:
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     headers = {} if payload is None else {"Content-Type": "application/json"}
-    request = urllib.request.Request(url, data=data, headers=headers, method="GET" if payload is None else "POST")
+    request = urllib.request.Request(url, data=data, headers=headers, method=method or ("GET" if payload is None else "POST"))
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.URLError as exc:
         raise TtsError(f"EutherLink request failed: {exc}") from exc
+
+
+def _cancel_eutherlink_job(base_url: str, worker_job_id: str, timeout: float) -> None:
+    try:
+        _request_json(f"{base_url}/v1/tts/jobs/{worker_job_id}", None, timeout, method="DELETE")
+    except TtsError as exc:
+        LOGGER.warning("TTS_TRACE eutherbooks_worker_cancel_failed worker_job=%s error=%s", worker_job_id, exc)
 
 
 def _download_file(url: str, output_path: Path, timeout: float) -> None:

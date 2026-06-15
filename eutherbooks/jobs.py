@@ -442,6 +442,7 @@ class TtsQueue:
         partial_publisher: Callable[[dict[str, Any]], None] | None = None,
     ) -> Callable[[dict[str, Any]], None]:
         def update(status: dict[str, Any]) -> None:
+            self._raise_if_cancelled(job.id)
             if partial_publisher is not None:
                 partial_publisher(status)
             perf = status.get("perf")
