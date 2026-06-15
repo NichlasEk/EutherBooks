@@ -260,7 +260,6 @@ class TtsQueue:
                             _short_sha256(chunk.encode("utf-8")),
                         )
                         if not output_path.exists() or output_path.stat().st_size == 0:
-                            partials_before = len(audio_files)
                             part_started = time.perf_counter()
                             self.backend.synthesize(
                                 chunk,
@@ -291,9 +290,8 @@ class TtsQueue:
                                 }
                             )
                             self._raise_if_cancelled(job.id)
-                            if len(audio_files) > partials_before:
-                                continue
                         relative_posix = relative.as_posix()
+                        self._replace_partial_audio_with_final(audio_files, audio_durations, seen_audio, relative_posix)
                         if relative_posix not in seen_audio:
                             seen_audio.add(relative_posix)
                             audio_files.append(relative_posix)
@@ -377,7 +375,6 @@ class TtsQueue:
                         _short_sha256(chunk.encode("utf-8")),
                     )
                     if not output_path.exists() or output_path.stat().st_size == 0:
-                        partials_before = len(audio_files)
                         self.backend.synthesize(
                             chunk,
                             output_path,
@@ -400,8 +397,7 @@ class TtsQueue:
                                 ),
                             ),
                         )
-                        if len(audio_files) > partials_before:
-                            continue
+                    self._replace_partial_audio_with_final(audio_files, audio_durations, seen_audio, relative_posix)
                     if relative_posix not in seen_audio:
                         seen_audio.add(relative_posix)
                         audio_files.append(relative_posix)
@@ -504,6 +500,25 @@ class TtsQueue:
         job.total_chunks = max(job.total_chunks, job.total_audio_files)
         job.current_chunk_index = len(audio_files)
         self.store.put(job)
+
+    def _replace_partial_audio_with_final(
+        self,
+        audio_files: list[str],
+        audio_durations: list[float],
+        seen_audio: set[str],
+        final_relative: str,
+    ) -> None:
+        partial_prefix = final_relative.removesuffix(".wav") + ".stream-"
+        indexes = [
+            index
+            for index, audio_path in enumerate(audio_files)
+            if audio_path.startswith(partial_prefix) and audio_path.endswith(".wav")
+        ]
+        for index in reversed(indexes):
+            seen_audio.discard(audio_files[index])
+            del audio_files[index]
+            if index < len(audio_durations):
+                del audio_durations[index]
 
     def _raise_if_cancelled(self, job_id: str) -> None:
         latest = self.store.get(job_id)

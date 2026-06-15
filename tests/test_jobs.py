@@ -246,6 +246,26 @@ def test_tts_queue_backfills_total_for_existing_job(tmp_path: Path) -> None:
     assert store.get(job_id).total_audio_files == 1  # type: ignore[union-attr]
 
 
+def test_final_audio_replaces_stream_partials(tmp_path: Path) -> None:
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    store = JobStore(tmp_path / "data")
+    queue = TtsQueue(Library(library_dir), store, RecordingBackend(), tmp_path / "audio")
+    audio_files = [
+        "book/job/0000-000.stream-001.wav",
+        "book/job/0000-000.stream-002.wav",
+        "book/job/0000-001.stream-001.wav",
+    ]
+    audio_durations = [9.5, 2.0, 8.0]
+    seen_audio = set(audio_files)
+
+    queue._replace_partial_audio_with_final(audio_files, audio_durations, seen_audio, "book/job/0000-000.wav")
+
+    assert audio_files == ["book/job/0000-001.stream-001.wav"]
+    assert audio_durations == [8.0]
+    assert seen_audio == {"book/job/0000-001.stream-001.wav"}
+
+
 def test_split_for_tts_honors_max_chars() -> None:
     assert _split_for_tts("abcdef", max_chars=2) == ["ab", "cd", "ef"]
 
