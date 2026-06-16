@@ -178,13 +178,36 @@ def test_eutherlink_dots_voice_sends_model_backend_and_prompt(monkeypatch, tmp_p
     assert captured["prompt_text"] == "Detta sade jag i samplet."
 
 
-def test_eutherlink_dots_preset_uses_seed_without_prompt_audio(monkeypatch, tmp_path: Path) -> None:
+def test_eutherlink_dots_preset_uses_generated_prompt_audio(monkeypatch, tmp_path: Path) -> None:
     output = tmp_path / "out.wav"
     captured: dict[str, object] = {}
+    reference_payloads: list[dict[str, object]] = []
+    main_payloads: list[dict[str, object]] = []
+    statuses = iter(
+        [
+            {"status": "done", "audio_url": "/preset-audio"},
+            {"status": "done", "audio_url": "/audio"},
+        ]
+    )
 
     monkeypatch.setattr(tts, "_temporary_output_path", lambda path: tmp_path / ".out.tmp")
-    monkeypatch.setattr(tts, "_request_json", lambda url, payload, timeout: captured.update(payload or {}) or ({"status_url": "/status", "audio_url": "/audio", "status": "queued"} if payload is not None else {"status": "done", "audio_url": "/audio"}))
-    monkeypatch.setattr(tts, "_download_file", lambda url, output_path, timeout: output_path.write_bytes(b"wav"))
+    monkeypatch.setenv("EUTHERBOOKS_DATA_DIR", str(tmp_path / "data"))
+
+    def fake_request_json(url, payload, timeout):
+        if payload is not None:
+            if payload["text"] == tts._dots_preset_prompt_text("en-female-deep", "en"):
+                reference_payloads.append(dict(payload))
+                return {"id": "preset", "status_url": "/preset-status", "audio_url": "/preset-audio", "status": "queued"}
+            captured.update(payload)
+            main_payloads.append(dict(payload))
+            return {"id": "main", "status_url": "/status", "audio_url": "/audio", "status": "queued"}
+        return next(statuses)
+
+    def fake_download_file(url, output_path, timeout):
+        output_path.write_bytes(b"RIFF" + b"\0" * 4 + b"WAVE" + (b"preset" if "preset" in url else b"final"))
+
+    monkeypatch.setattr(tts, "_request_json", fake_request_json)
+    monkeypatch.setattr(tts, "_download_file", fake_download_file)
 
     tts.EutherLinkBackend().synthesize(
         "Hello",
@@ -197,9 +220,12 @@ def test_eutherlink_dots_preset_uses_seed_without_prompt_audio(monkeypatch, tmp_
     assert captured["model_backend"] == "dots.tts-mf"
     assert captured["voice_instruction"]
     assert captured["seed"] == tts._eutherlink_stable_preset_seed("en-female-deep")
-    assert "reference_wav_base64" not in captured
-    assert "prompt_wav_base64" not in captured
-    assert "prompt_text" not in captured
+    assert reference_payloads[0]["seed"] == tts._eutherlink_stable_preset_seed("en-female-deep")
+    assert reference_payloads[0]["voice_instruction"] == captured["voice_instruction"]
+    assert "reference_wav_base64" in captured
+    assert "prompt_wav_base64" in captured
+    assert captured["prompt_text"] == tts._dots_preset_prompt_text("en-female-deep", "en")
+    assert len(main_payloads) == 1
 
 
 def test_eutherlink_explicit_model_backend_option_wins(monkeypatch, tmp_path: Path) -> None:

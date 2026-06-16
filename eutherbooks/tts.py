@@ -178,16 +178,35 @@ class EutherLinkBackend(TtsBackend):
         if voice_id in {"own-sv", "own-en"}:
             reference_path = _own_voice_reference_path(voice_id, reference_path)
             prompt_text = _own_voice_prompt_text(voice_id, prompt_text)
+        elif _is_dots_backend(model_backend) and preset_seed is not None and not reference_path:
+            preset_reference = _dots_preset_reference_path(
+                base_url=base_url,
+                timeout=timeout,
+                poll_interval=poll_interval,
+                model_backend=model_backend,
+                voice_id=voice_id,
+                language=language,
+                voice_instruction=voice_instruction,
+                seed=explicit_seed or preset_seed,
+                template_name=payload.get("dots_template_name"),
+                ode_method=payload.get("dots_ode_method"),
+                num_steps=payload.get("dots_num_steps"),
+                guidance_scale=payload.get("dots_guidance_scale"),
+                speaker_scale=payload.get("dots_speaker_scale"),
+                max_generate_length=payload.get("dots_max_generate_length"),
+            )
+            reference_path = str(preset_reference)
+            prompt_text = _dots_preset_prompt_text(voice_id, language)
         sample_sha = ""
         sample_seed: int | None = None
         sample_size = 0
-        if voice_id in {"own-sv", "own-en"} and reference_path:
+        if (voice_id in {"own-sv", "own-en"} or (_is_dots_backend(model_backend) and prompt_text)) and reference_path:
             sample_path = Path(reference_path)
             sample = sample_path.read_bytes()
             sample_sha = _short_sha256(sample)
             sample_seed = _stable_voice_seed(sample)
             sample_size = len(sample)
-            if explicit_seed is None:
+            if voice_id in {"own-sv", "own-en"} and explicit_seed is None:
                 payload["seed"] = sample_seed
             sample_base64 = base64.b64encode(sample).decode("ascii")
             payload["reference_wav_base64"] = sample_base64
@@ -522,6 +541,173 @@ def _own_voice_prompt_text(voice_id: str, prompt_text: str) -> str:
 def _use_eutherlink_prompt_transcript(prompt_text: str = "") -> bool:
     value = os.environ.get("EUTHERBOOKS_EUTHERLINK_USE_PROMPT_TRANSCRIPT", "").strip().lower()
     return value in {"1", "true", "yes", "on"} or prompt_text.strip() in EUTHERLINK_PROMPT_TRANSCRIPTS
+
+
+def _dots_preset_prompt_text(voice_id: str, language: str) -> str:
+    normalized_language = language.strip().lower()
+    if voice_id.strip().lower().startswith("sv-") or normalized_language.startswith("sv"):
+        return (
+            "Solen lyser stilla över vägen. Jag läser den här korta referenstexten med jämn rytm, "
+            "tydlig artikulation och naturliga pauser, så att rösten kan hållas konsekvent."
+        )
+    return (
+        "Morning light rests quietly on the road. I read this short reference passage with steady rhythm, "
+        "clear articulation, and natural pauses, so the voice can remain consistent."
+    )
+
+
+def _dots_preset_reference_path(
+    *,
+    base_url: str,
+    timeout: float,
+    poll_interval: float,
+    model_backend: str,
+    voice_id: str,
+    language: str,
+    voice_instruction: str,
+    seed: int,
+    template_name: Any,
+    ode_method: Any,
+    num_steps: Any,
+    guidance_scale: Any,
+    speaker_scale: Any,
+    max_generate_length: Any,
+) -> Path:
+    cache_dir = _dots_preset_cache_dir() / _safe_cache_name(model_backend)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = cache_dir / f"{_safe_cache_name(voice_id)}-{seed}.wav"
+    if cache_path.is_file() and cache_path.stat().st_size > 44:
+        return cache_path
+
+    lock_dir = cache_path.with_suffix(".lock")
+    lock_acquired = False
+    deadline = time.monotonic() + float(os.environ.get("EUTHERBOOKS_DOTS_PRESET_LOCK_TIMEOUT", "240"))
+    while not lock_acquired:
+        try:
+            lock_dir.mkdir()
+            lock_acquired = True
+        except FileExistsError:
+            if cache_path.is_file() and cache_path.stat().st_size > 44:
+                return cache_path
+            if time.monotonic() > deadline:
+                raise TtsError(f"Timed out waiting for Dots preset reference: {voice_id}")
+            time.sleep(min(1.0, max(0.05, poll_interval)))
+
+    try:
+        if cache_path.is_file() and cache_path.stat().st_size > 44:
+            return cache_path
+        temp_path = cache_path.with_name(f".{cache_path.name}.{os.getpid()}.tmp")
+        try:
+            _render_dots_preset_reference(
+                base_url=base_url,
+                timeout=timeout,
+                poll_interval=poll_interval,
+                output_path=temp_path,
+                model_backend=model_backend,
+                voice_id=voice_id,
+                language=language,
+                voice_instruction=voice_instruction,
+                seed=seed,
+                template_name=template_name,
+                ode_method=ode_method,
+                num_steps=num_steps,
+                guidance_scale=guidance_scale,
+                speaker_scale=speaker_scale,
+                max_generate_length=max_generate_length,
+            )
+            os.replace(temp_path, cache_path)
+        finally:
+            temp_path.unlink(missing_ok=True)
+    finally:
+        try:
+            lock_dir.rmdir()
+        except OSError:
+            pass
+    return cache_path
+
+
+def _render_dots_preset_reference(
+    *,
+    base_url: str,
+    timeout: float,
+    poll_interval: float,
+    output_path: Path,
+    model_backend: str,
+    voice_id: str,
+    language: str,
+    voice_instruction: str,
+    seed: int,
+    template_name: Any,
+    ode_method: Any,
+    num_steps: Any,
+    guidance_scale: Any,
+    speaker_scale: Any,
+    max_generate_length: Any,
+) -> None:
+    payload: dict[str, Any] = {
+        "text": _dots_preset_prompt_text(voice_id, language),
+        "voice_instruction": voice_instruction,
+        "language": language,
+        "output_format": "wav",
+        "model_backend": model_backend,
+        "seed": seed,
+        "dots_template_name": template_name or "tts",
+        "dots_ode_method": ode_method or "euler",
+        "dots_num_steps": int(num_steps or 4),
+        "dots_guidance_scale": float(guidance_scale if guidance_scale is not None else 1.2),
+        "dots_speaker_scale": float(speaker_scale if speaker_scale is not None else 1.5),
+        "dots_max_generate_length": int(max_generate_length or 500),
+        "max_chunk_chars": 700,
+    }
+    LOGGER.warning(
+        "TTS_TRACE eutherbooks_preset_reference_start voice=%s model_backend=%s seed=%s output=%s prompt_text_sha=%s",
+        voice_id,
+        model_backend,
+        seed,
+        output_path,
+        _short_sha256(payload["text"].encode("utf-8")),
+    )
+    job = _request_json(f"{base_url}/v1/tts/jobs", payload, timeout)
+    status_url = _absolute_worker_url(base_url, str(job["status_url"]))
+    worker_job_id = str(job.get("id") or "")
+    deadline = time.monotonic() + float(os.environ.get("EUTHERBOOKS_DOTS_PRESET_JOB_TIMEOUT", "900"))
+    status = job
+    try:
+        while status.get("status") not in {"done", "failed"}:
+            if time.monotonic() > deadline:
+                raise TtsError(f"Dots preset reference job timed out for {voice_id}.")
+            time.sleep(poll_interval)
+            status = _request_json(status_url, None, timeout)
+        if status.get("status") != "done":
+            raise TtsError(str(status.get("error") or status.get("message") or "Dots preset reference job failed."))
+        audio_url = _absolute_worker_url(base_url, str(status.get("audio_url") or job["audio_url"]))
+        _download_file(audio_url, output_path, timeout)
+        LOGGER.warning(
+            "TTS_TRACE eutherbooks_preset_reference_done voice=%s model_backend=%s seed=%s worker_job=%s bytes=%s",
+            voice_id,
+            model_backend,
+            seed,
+            worker_job_id,
+            output_path.stat().st_size if output_path.exists() else 0,
+        )
+    except Exception:
+        if worker_job_id:
+            _cancel_eutherlink_job(base_url, worker_job_id, timeout)
+        raise
+
+
+def _dots_preset_cache_dir() -> Path:
+    configured = os.environ.get("EUTHERBOOKS_DOTS_PRESET_VOICE_DIR")
+    if configured:
+        return Path(configured).expanduser()
+    data_dir = Path(os.environ.get("EUTHERBOOKS_DATA_DIR", "data")).expanduser()
+    return data_dir / "preset-voices"
+
+
+def _safe_cache_name(value: str) -> str:
+    cleaned = "".join(ch.lower() if ch.isalnum() else "-" for ch in value.strip())
+    cleaned = "-".join(part for part in cleaned.split("-") if part)
+    return cleaned or "default"
 
 
 def _temporary_output_path(output_path: Path) -> Path:
