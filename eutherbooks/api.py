@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from array import array
 from pathlib import Path
+import shutil
 import sys
 import uuid
 import wave
@@ -191,7 +192,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health")
     def health() -> dict[str, object]:
-        payload: dict[str, object] = {"status": "ok", "tts_backend": backend.name}
+        audio_usage = shutil.disk_usage(settings.audio_dir)
+        payload: dict[str, object] = {
+            "status": "ok",
+            "tts_backend": backend.name,
+            "storage": {
+                "audio_dir": str(settings.audio_dir),
+                "audio_free_bytes": audio_usage.free,
+                "audio_total_bytes": audio_usage.total,
+                "audio_used_bytes": audio_usage.used,
+            },
+        }
         if backend.name == "eutherlink":
             try:
                 worker_health = eutherlink_health()

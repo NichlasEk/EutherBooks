@@ -73,3 +73,13 @@ def test_eutherlink_health_includes_dots_status(monkeypatch) -> None:
 
     assert health["tts_backend"] == "eutherlink"
     assert health["dots_tts"] == {"status": "ready", "model_loaded": True}
+
+
+def test_health_includes_audio_storage() -> None:
+    app = create_app()
+    health = next(route.endpoint for route in app.routes if isinstance(route, APIRoute) and route.path == "/health")()
+
+    storage = health["storage"]
+    assert isinstance(storage["audio_free_bytes"], int)
+    assert storage["audio_free_bytes"] > 0
+    assert storage["audio_total_bytes"] >= storage["audio_free_bytes"]
