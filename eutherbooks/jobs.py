@@ -668,6 +668,9 @@ def _normalized_tts_options(options: dict[str, Any]) -> dict[str, Any]:
     dots_ode_method = _clean_dots_ode_method(options.get("dots_ode_method"))
     if dots_ode_method:
         normalized["dots_ode_method"] = dots_ode_method
+    regenerate_nonce = _clean_regenerate_nonce(options.get("regenerate_nonce"))
+    if regenerate_nonce:
+        normalized["regenerate_nonce"] = regenerate_nonce
     return normalized
 
 
@@ -707,6 +710,15 @@ def _clean_dots_ode_method(value: Any) -> str:
         return ""
     normalized = value.strip().lower()
     return normalized if normalized in {"euler", "midpoint"} else ""
+
+
+def _clean_regenerate_nonce(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    normalized = value.strip().lower()
+    if not normalized or len(normalized) > 64:
+        return ""
+    return normalized if all(ch.isalnum() or ch in {"-", "_"} for ch in normalized) else ""
 
 
 def _split_for_tts(text: str, max_chars: int = DEFAULT_MAX_CHARS_PER_AUDIO_FILE) -> list[str]:

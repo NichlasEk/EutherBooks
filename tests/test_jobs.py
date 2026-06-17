@@ -198,6 +198,23 @@ def test_tts_queue_reuses_existing_active_job(tmp_path: Path) -> None:
     assert first.id == second.id
 
 
+def test_tts_queue_regenerate_nonce_creates_new_job(tmp_path: Path) -> None:
+    library_dir = tmp_path / "library"
+    book_path = library_dir / "book.txt"
+    book_path.parent.mkdir(parents=True)
+    book_path.write_text("Hello", encoding="utf-8")
+    library = Library(library_dir)
+    book = library.list_books()[0]
+    store = JobStore(tmp_path / "data")
+    backend = RecordingBackend()
+    queue = TtsQueue(library, store, backend, tmp_path / "audio")
+
+    first = queue.enqueue(book.id, "en", "en", [0])
+    second = queue.enqueue(book.id, "en", "en", [0], {"regenerate_nonce": "again"})
+
+    assert first.id != second.id
+
+
 def test_tts_queue_can_enqueue_prefetch_without_cancelling_owner_jobs(tmp_path: Path) -> None:
     library_dir = tmp_path / "library"
     book_path = library_dir / "book.txt"

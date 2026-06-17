@@ -63,6 +63,7 @@ class CreateJobRequest(BaseModel):
     model_backend: str | None = Field(default=None, examples=["voxcpm2"])
     owner: str | None = Field(default=None, max_length=120)
     cancel_existing: bool = True
+    force_regenerate: bool = False
     chapters: list[int] | None = None
     length_scale: float | None = Field(default=None, examples=[1.0])
     noise_scale: float | None = Field(default=None, examples=[0.667])
@@ -274,6 +275,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "voice_reference_path": request.voice_reference_path,
                     "voice_prompt_text": request.voice_prompt_text,
                     "model_backend": request.model_backend,
+                    "regenerate_nonce": uuid.uuid4().hex if request.force_regenerate else None,
                 },
                 queue_remainder=request.queue_remainder,
                 cancel_existing=request.cancel_existing,
