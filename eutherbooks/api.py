@@ -486,6 +486,7 @@ def _eutherlink_voices() -> list[VoiceResponse]:
         ("dots-mf-own-en", "Dots MF own voice EN", "en", "user:own-en", None),
         ("dots-soar-own-sv", "Dots SOAR own voice SV", "sv", "user:own-sv", None),
         ("dots-soar-own-en", "Dots SOAR own voice EN", "en", "user:own-en", None),
+        ("grapheneos-matcha-en", "GrapheneOS Matcha EN fallback", "en", "preset:grapheneos-matcha-en", 1.0),
         ("custom", "Custom voice prompt", "sv", "preset:custom", None),
     ]
     return [
@@ -495,7 +496,7 @@ def _eutherlink_voices() -> list[VoiceResponse]:
             language=language,
             backend="eutherlink",
             path=path,
-            model_backend="dots.tts-mf" if voice_id.startswith("dots-mf-") else ("dots.tts-soar" if voice_id.startswith("dots-soar-") else "voxcpm2"),
+            model_backend="dots.tts-mf" if voice_id.startswith("dots-mf-") else ("dots.tts-soar" if voice_id.startswith("dots-soar-") else ("grapheneos-matcha-en" if voice_id.startswith("grapheneos-matcha-") else "voxcpm2")),
             default_length_scale=length_scale,
             default_seed=_default_voice_seed(_base_voice_seed_id(voice_id)) if path.startswith("preset:") and voice_id != "custom" else None,
         )

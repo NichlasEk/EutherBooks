@@ -59,6 +59,18 @@ def test_eutherlink_voices_include_dots_model_choices(monkeypatch) -> None:
         assert voices_by_id[f"dots-mf-{voice_id}"].default_seed == voices_by_id[voice_id].default_seed
         assert voices_by_id[f"dots-soar-{voice_id}"].default_seed == voices_by_id[voice_id].default_seed
 
+
+def test_eutherlink_voices_include_grapheneos_matcha_fallback(monkeypatch) -> None:
+    monkeypatch.setenv("EUTHERBOOKS_TTS_BACKEND", "eutherlink")
+    app = create_app()
+    voices = next(route.endpoint for route in app.routes if isinstance(route, APIRoute) and route.path == "/voices")()
+
+    fallback = next(voice for voice in voices if voice.id == "grapheneos-matcha-en")
+    assert fallback.model_backend == "grapheneos-matcha-en"
+    assert fallback.language == "en"
+    assert fallback.default_length_scale == 1.0
+
+
 def test_eutherlink_health_includes_dots_status(monkeypatch) -> None:
     monkeypatch.setenv("EUTHERBOOKS_TTS_BACKEND", "eutherlink")
     import eutherbooks.api as api_module

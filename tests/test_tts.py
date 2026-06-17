@@ -248,6 +248,26 @@ def test_eutherlink_explicit_model_backend_option_wins(monkeypatch, tmp_path: Pa
     assert captured["model_backend"] == "voxcpm2"
 
 
+def test_eutherlink_grapheneos_matcha_backend_routes_to_worker(monkeypatch, tmp_path: Path) -> None:
+    output = tmp_path / "out.wav"
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(tts, "_temporary_output_path", lambda path: tmp_path / ".out.tmp")
+    monkeypatch.setattr(tts, "_request_json", lambda url, payload, timeout: captured.update(payload or {}) or ({"status_url": "/status", "audio_url": "/audio", "status": "queued"} if payload is not None else {"status": "done", "audio_url": "/audio"}))
+    monkeypatch.setattr(tts, "_download_file", lambda url, output_path, timeout: output_path.write_bytes(b"wav"))
+
+    tts.EutherLinkBackend().synthesize(
+        "Hello",
+        output,
+        "en",
+        "grapheneos-matcha-en",
+        {"model_backend": "grapheneos-matcha-en"},
+    )
+
+    assert captured["model_backend"] == "grapheneos-matcha-en"
+    assert captured["language"] == "en"
+
+
 def test_eutherlink_downloads_stream_partials(monkeypatch, tmp_path: Path) -> None:
     output = tmp_path / "out.wav"
     captured: dict[str, object] = {}

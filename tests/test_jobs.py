@@ -59,6 +59,10 @@ def test_tts_options_normalize_dots_params() -> None:
     assert options["dots_max_generate_length"] == 700
 
 
+def test_tts_options_accept_grapheneos_matcha_backend() -> None:
+    assert _normalized_tts_options({"model_backend": "grapheneos-matcha-en"})["model_backend"] == "grapheneos-matcha-en"
+
+
 def test_job_store_round_trips_jobs(tmp_path: Path) -> None:
     store = JobStore(tmp_path)
     job = TtsJob(

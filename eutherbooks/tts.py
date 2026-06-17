@@ -810,9 +810,11 @@ def backend_from_name(name: str) -> TtsBackend:
 
 
 def _eutherlink_model_backend(voice: str, option: Any) -> str:
-    if isinstance(option, str) and option.strip().lower() in {"voxcpm2", "dots.tts-soar", "dots.tts-mf"}:
+    if isinstance(option, str) and option.strip().lower() in {"voxcpm2", "dots.tts-soar", "dots.tts-mf", "grapheneos-matcha-en"}:
         return option.strip().lower()
     normalized_voice = voice.strip().lower()
+    if normalized_voice.startswith("grapheneos-matcha-"):
+        return "grapheneos-matcha-en"
     if normalized_voice.startswith("dots-mf-"):
         return "dots.tts-mf"
     return "dots.tts-soar" if normalized_voice.startswith("dots-soar-") else "voxcpm2"
