@@ -63,6 +63,10 @@ def test_tts_options_accept_grapheneos_matcha_backend() -> None:
     assert _normalized_tts_options({"model_backend": "grapheneos-matcha-en"})["model_backend"] == "grapheneos-matcha-en"
 
 
+def test_tts_options_accept_auto_fallback_backend() -> None:
+    assert _normalized_tts_options({"model_backend": "auto-fallback"})["model_backend"] == "auto-fallback"
+
+
 def test_job_store_round_trips_jobs(tmp_path: Path) -> None:
     store = JobStore(tmp_path)
     job = TtsJob(

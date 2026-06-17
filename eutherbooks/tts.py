@@ -149,7 +149,7 @@ class EutherLinkBackend(TtsBackend):
             ),
             "max_chunk_chars": int((options or {}).get("max_chunk_chars") or os.environ.get("EUTHERBOOKS_EUTHERLINK_MAX_CHUNK_CHARS", "700")),
         }
-        if _is_dots_backend(model_backend):
+        if _needs_dots_reference(model_backend):
             payload.update(
                 {
                     "dots_template_name": _dots_template_name((options or {}).get("dots_template_name")),
@@ -178,7 +178,7 @@ class EutherLinkBackend(TtsBackend):
         if voice_id in {"own-sv", "own-en"}:
             reference_path = _own_voice_reference_path(voice_id, reference_path)
             prompt_text = _own_voice_prompt_text(voice_id, prompt_text)
-        elif _is_dots_backend(model_backend) and preset_seed is not None and not reference_path:
+        elif _needs_dots_reference(model_backend) and preset_seed is not None and not reference_path:
             preset_reference = _dots_preset_reference_path(
                 base_url=base_url,
                 timeout=timeout,
@@ -200,7 +200,7 @@ class EutherLinkBackend(TtsBackend):
         sample_sha = ""
         sample_seed: int | None = None
         sample_size = 0
-        if (voice_id in {"own-sv", "own-en"} or (_is_dots_backend(model_backend) and prompt_text)) and reference_path:
+        if (voice_id in {"own-sv", "own-en"} or (_needs_dots_reference(model_backend) and prompt_text)) and reference_path:
             sample_path = Path(reference_path)
             sample = sample_path.read_bytes()
             sample_sha = _short_sha256(sample)
@@ -210,10 +210,10 @@ class EutherLinkBackend(TtsBackend):
                 payload["seed"] = sample_seed
             sample_base64 = base64.b64encode(sample).decode("ascii")
             payload["reference_wav_base64"] = sample_base64
-            if prompt_text and (_is_dots_backend(model_backend) or _use_eutherlink_prompt_transcript(prompt_text)):
+            if prompt_text and (_needs_dots_reference(model_backend) or _use_eutherlink_prompt_transcript(prompt_text)):
                 payload["prompt_wav_base64"] = sample_base64
                 payload["prompt_text"] = prompt_text
-        if _is_dots_backend(model_backend) and voice_id in {"own-sv", "own-en"} and (
+        if _needs_dots_reference(model_backend) and voice_id in {"own-sv", "own-en"} and (
             "prompt_wav_base64" not in payload or not payload.get("prompt_text")
         ):
             raise TtsError(f"{model_backend} own voice requires a reference WAV and matching prompt text.")
@@ -810,9 +810,11 @@ def backend_from_name(name: str) -> TtsBackend:
 
 
 def _eutherlink_model_backend(voice: str, option: Any) -> str:
-    if isinstance(option, str) and option.strip().lower() in {"voxcpm2", "dots.tts-soar", "dots.tts-mf", "grapheneos-matcha-en"}:
+    if isinstance(option, str) and option.strip().lower() in {"voxcpm2", "dots.tts-soar", "dots.tts-mf", "grapheneos-matcha-en", "auto-fallback"}:
         return option.strip().lower()
     normalized_voice = voice.strip().lower()
+    if normalized_voice.startswith("auto-"):
+        return "auto-fallback"
     if normalized_voice.startswith("grapheneos-matcha-"):
         return "grapheneos-matcha-en"
     if normalized_voice.startswith("dots-mf-"):
@@ -824,6 +826,10 @@ def _is_dots_backend(model_backend: str) -> bool:
     return model_backend in {"dots.tts-soar", "dots.tts-mf"}
 
 
+def _needs_dots_reference(model_backend: str) -> bool:
+    return model_backend in {"dots.tts-soar", "dots.tts-mf", "auto-fallback"}
+
+
 def _eutherlink_voice_id(voice: str) -> str:
     value = voice.strip()
     lower = value.lower()
@@ -831,6 +837,8 @@ def _eutherlink_voice_id(voice: str) -> str:
         return value[len("dots-soar-") :]
     if lower.startswith("dots-mf-"):
         return value[len("dots-mf-") :]
+    if lower.startswith("auto-"):
+        return value[len("auto-") :]
     return value
 
 

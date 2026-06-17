@@ -229,6 +229,48 @@ def test_eutherlink_dots_preset_uses_generated_prompt_audio(monkeypatch, tmp_pat
     assert len(main_payloads) == 1
 
 
+def test_eutherlink_auto_fallback_preset_uses_generated_prompt_audio(monkeypatch, tmp_path: Path) -> None:
+    output = tmp_path / "out.wav"
+    captured: dict[str, object] = {}
+    reference_payloads: list[dict[str, object]] = []
+    statuses = iter(
+        [
+            {"status": "done", "audio_url": "/preset-audio"},
+            {"status": "done", "audio_url": "/audio"},
+        ]
+    )
+
+    monkeypatch.setattr(tts, "_temporary_output_path", lambda path: tmp_path / ".out.tmp")
+    monkeypatch.setenv("EUTHERBOOKS_DATA_DIR", str(tmp_path / "data"))
+
+    def fake_request_json(url, payload, timeout):
+        if payload is not None:
+            if payload["text"] == tts._dots_preset_prompt_text("en-female-deep", "en"):
+                reference_payloads.append(dict(payload))
+                return {"id": "preset", "status_url": "/preset-status", "audio_url": "/preset-audio", "status": "queued"}
+            captured.update(payload)
+            return {"id": "main", "status_url": "/status", "audio_url": "/audio", "status": "queued"}
+        return next(statuses)
+
+    monkeypatch.setattr(tts, "_request_json", fake_request_json)
+    monkeypatch.setattr(tts, "_download_file", lambda url, output_path, timeout: output_path.write_bytes(b"RIFF" + b"\0" * 4 + b"WAVE"))
+
+    tts.EutherLinkBackend().synthesize(
+        "Hello",
+        output,
+        "en",
+        "auto-en-female-deep",
+        {"model_backend": "auto-fallback"},
+    )
+
+    assert captured["model_backend"] == "auto-fallback"
+    assert captured["seed"] == tts._eutherlink_stable_preset_seed("en-female-deep")
+    assert reference_payloads[0]["model_backend"] == "voxcpm2"
+    assert "reference_wav_base64" in captured
+    assert "prompt_wav_base64" in captured
+    assert captured["prompt_text"] == tts._dots_preset_prompt_text("en-female-deep", "en")
+
+
 def test_eutherlink_explicit_model_backend_option_wins(monkeypatch, tmp_path: Path) -> None:
     output = tmp_path / "out.wav"
     captured: dict[str, object] = {}

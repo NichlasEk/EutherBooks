@@ -71,6 +71,17 @@ def test_eutherlink_voices_include_grapheneos_matcha_fallback(monkeypatch) -> No
     assert fallback.default_length_scale == 1.0
 
 
+def test_eutherlink_voices_include_auto_fallback_presets(monkeypatch) -> None:
+    monkeypatch.setenv("EUTHERBOOKS_TTS_BACKEND", "eutherlink")
+    app = create_app()
+    voices = next(route.endpoint for route in app.routes if isinstance(route, APIRoute) and route.path == "/voices")()
+
+    auto_ids = {voice.id for voice in voices if voice.model_backend == "auto-fallback"}
+    assert {"auto-sv-female-warm", "auto-en-female-warm"} <= auto_ids
+    voices_by_id = {voice.id: voice for voice in voices}
+    assert voices_by_id["auto-en-female-warm"].default_seed == voices_by_id["en-female-warm"].default_seed
+
+
 def test_eutherlink_health_includes_dots_status(monkeypatch) -> None:
     monkeypatch.setenv("EUTHERBOOKS_TTS_BACKEND", "eutherlink")
     import eutherbooks.api as api_module

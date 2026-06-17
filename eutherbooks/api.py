@@ -480,6 +480,10 @@ def _eutherlink_voices() -> list[VoiceResponse]:
             (f"dots-soar-{voice_id}", f"Dots SOAR {label}", language, path, length_scale)
             for voice_id, label, language, path, length_scale in base_presets
         ],
+        *[
+            (f"auto-{voice_id}", f"Auto fallback {label}", language, path, length_scale)
+            for voice_id, label, language, path, length_scale in base_presets
+        ],
         ("own-sv", "Your own voice SV", "sv", "user:own-sv", None),
         ("own-en", "Your own voice EN", "en", "user:own-en", None),
         ("dots-mf-own-sv", "Dots MF own voice SV", "sv", "user:own-sv", None),
@@ -496,7 +500,7 @@ def _eutherlink_voices() -> list[VoiceResponse]:
             language=language,
             backend="eutherlink",
             path=path,
-            model_backend="dots.tts-mf" if voice_id.startswith("dots-mf-") else ("dots.tts-soar" if voice_id.startswith("dots-soar-") else ("grapheneos-matcha-en" if voice_id.startswith("grapheneos-matcha-") else "voxcpm2")),
+            model_backend="dots.tts-mf" if voice_id.startswith("dots-mf-") else ("dots.tts-soar" if voice_id.startswith("dots-soar-") else ("grapheneos-matcha-en" if voice_id.startswith("grapheneos-matcha-") else ("auto-fallback" if voice_id.startswith("auto-") else "voxcpm2"))),
             default_length_scale=length_scale,
             default_seed=_default_voice_seed(_base_voice_seed_id(voice_id)) if path.startswith("preset:") and voice_id != "custom" else None,
         )
@@ -511,6 +515,8 @@ def _base_voice_seed_id(voice_id: str) -> str:
         return normalized[len("dots-mf-") :]
     if lower.startswith("dots-soar-"):
         return normalized[len("dots-soar-") :]
+    if lower.startswith("auto-"):
+        return normalized[len("auto-") :]
     return normalized
 
 
