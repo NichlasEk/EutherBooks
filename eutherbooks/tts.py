@@ -573,7 +573,10 @@ def _dots_preset_reference_path(
     speaker_scale: Any,
     max_generate_length: Any,
 ) -> Path:
-    cache_dir = _dots_preset_cache_dir() / _safe_cache_name(model_backend)
+    reference_backend = os.environ.get("EUTHERBOOKS_DOTS_PRESET_REFERENCE_BACKEND", "voxcpm2").strip().lower()
+    if reference_backend not in {"voxcpm2", "dots.tts-soar", "dots.tts-mf"}:
+        reference_backend = "voxcpm2"
+    cache_dir = _dots_preset_cache_dir() / _safe_cache_name(reference_backend)
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path = cache_dir / f"{_safe_cache_name(voice_id)}-{seed}.wav"
     if cache_path.is_file() and cache_path.stat().st_size > 44:
@@ -608,6 +611,7 @@ def _dots_preset_reference_path(
                 language=language,
                 voice_instruction=voice_instruction,
                 seed=seed,
+                reference_backend=reference_backend,
                 template_name=template_name,
                 ode_method=ode_method,
                 num_steps=num_steps,
@@ -637,6 +641,7 @@ def _render_dots_preset_reference(
     language: str,
     voice_instruction: str,
     seed: int,
+    reference_backend: str,
     template_name: Any,
     ode_method: Any,
     num_steps: Any,
@@ -649,20 +654,26 @@ def _render_dots_preset_reference(
         "voice_instruction": voice_instruction,
         "language": language,
         "output_format": "wav",
-        "model_backend": model_backend,
+        "model_backend": reference_backend,
         "seed": seed,
-        "dots_template_name": template_name or "tts",
-        "dots_ode_method": ode_method or "euler",
-        "dots_num_steps": int(num_steps or 4),
-        "dots_guidance_scale": float(guidance_scale if guidance_scale is not None else 1.2),
-        "dots_speaker_scale": float(speaker_scale if speaker_scale is not None else 1.5),
-        "dots_max_generate_length": int(max_generate_length or 500),
         "max_chunk_chars": 700,
     }
+    if _is_dots_backend(reference_backend):
+        payload.update(
+            {
+                "dots_template_name": template_name or "tts",
+                "dots_ode_method": ode_method or "euler",
+                "dots_num_steps": int(num_steps or 4),
+                "dots_guidance_scale": float(guidance_scale if guidance_scale is not None else 1.2),
+                "dots_speaker_scale": float(speaker_scale if speaker_scale is not None else 1.5),
+                "dots_max_generate_length": int(max_generate_length or 500),
+            }
+        )
     LOGGER.warning(
-        "TTS_TRACE eutherbooks_preset_reference_start voice=%s model_backend=%s seed=%s output=%s prompt_text_sha=%s",
+        "TTS_TRACE eutherbooks_preset_reference_start voice=%s model_backend=%s reference_backend=%s seed=%s output=%s prompt_text_sha=%s",
         voice_id,
         model_backend,
+        reference_backend,
         seed,
         output_path,
         _short_sha256(payload["text"].encode("utf-8")),
@@ -683,9 +694,10 @@ def _render_dots_preset_reference(
         audio_url = _absolute_worker_url(base_url, str(status.get("audio_url") or job["audio_url"]))
         _download_file(audio_url, output_path, timeout)
         LOGGER.warning(
-            "TTS_TRACE eutherbooks_preset_reference_done voice=%s model_backend=%s seed=%s worker_job=%s bytes=%s",
+            "TTS_TRACE eutherbooks_preset_reference_done voice=%s model_backend=%s reference_backend=%s seed=%s worker_job=%s bytes=%s",
             voice_id,
             model_backend,
+            reference_backend,
             seed,
             worker_job_id,
             output_path.stat().st_size if output_path.exists() else 0,

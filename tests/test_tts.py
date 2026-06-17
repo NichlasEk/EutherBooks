@@ -220,6 +220,7 @@ def test_eutherlink_dots_preset_uses_generated_prompt_audio(monkeypatch, tmp_pat
     assert captured["model_backend"] == "dots.tts-mf"
     assert captured["voice_instruction"]
     assert captured["seed"] == tts._eutherlink_stable_preset_seed("en-female-deep")
+    assert reference_payloads[0]["model_backend"] == "voxcpm2"
     assert reference_payloads[0]["seed"] == tts._eutherlink_stable_preset_seed("en-female-deep")
     assert reference_payloads[0]["voice_instruction"] == captured["voice_instruction"]
     assert "reference_wav_base64" in captured
