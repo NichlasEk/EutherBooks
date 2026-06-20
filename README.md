@@ -96,6 +96,25 @@ curl -X POST http://localhost:8088/books/BOOK_ID/tts \
   -d '{"language":"sv","voice":"sv","chapters":[0]}'
 ```
 
+## Cleanup
+
+Generated audiobook audio can grow quickly under `/srv/eutherbooks/audio`.
+The cleanup tool is dry-run by default:
+
+```bash
+python3 scripts/clean_generated_audio.py \
+  --data-dir /home/nichlas/EutherBooks/data \
+  --audio-dir /srv/eutherbooks/audio \
+  --library-dir /home/nichlas/EutherBooks/library \
+  --max-audio-gib 12 \
+  --clean-python-cache
+```
+
+Pass `--apply` to delete. The systemd timer in `deploy/systemd/eutherbooks-clean.timer`
+runs the same conservative cleanup daily: it keeps at least one recent playable job per
+owner/book/chapter, removes stale failed jobs, old `jobs.json.backup.*` files, and Python
+cache directories. It does not delete uploaded books from `library/`.
+
 ## Next Good Steps
 
 - Add authenticated upload/import endpoints for known public-domain sources.
