@@ -58,6 +58,10 @@ class ChapterTextResponse(ChapterResponse):
         return cls(index=chapter.index, title=chapter.title, char_count=len(chapter.text), text=chapter.text)
 
 
+class CancelJobsResponse(BaseModel):
+    cancelled: int
+
+
 class CreateJobRequest(BaseModel):
     language: str | None = Field(default=None, examples=["sv"])
     voice: str | None = Field(default=None, examples=["sv"])
@@ -307,6 +311,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found")
         return JobResponse.from_job(job)
+
+    @app.delete("/jobs/active", response_model=CancelJobsResponse)
+    def cancel_active_jobs(owner: str | None = None, job_store: JobStore = Depends(get_store)) -> CancelJobsResponse:
+        cancelled = job_store.cancel_active("Cancelled by user request.", owner=owner)
+        return CancelJobsResponse(cancelled=cancelled)
 
     @app.get("/jobs/{job_id}/audio")
     def get_job_audio(job_id: str, job_store: JobStore = Depends(get_store)) -> FileResponse:

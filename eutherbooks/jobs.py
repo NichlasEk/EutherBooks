@@ -56,16 +56,16 @@ class JobStore:
             payload = {job_id: asdict(value) for job_id, value in jobs.items()}
             self.path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    def cancel_incomplete_for_owner(self, owner: str, reason: str, except_job_id: str | None = None) -> int:
-        clean_owner = owner.strip()
-        if not clean_owner:
-            return 0
+    def cancel_active(self, reason: str, owner: str | None = None, except_job_id: str | None = None) -> int:
+        clean_owner = owner.strip() if owner else ""
         with self._lock:
             jobs = self._read()
             changed = False
             cancelled = 0
             for job in jobs.values():
-                if job.id == except_job_id or job.owner != clean_owner:
+                if job.id == except_job_id:
+                    continue
+                if clean_owner and job.owner != clean_owner:
                     continue
                 if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
                     job.status = JobStatus.FAILED
@@ -80,6 +80,12 @@ class JobStore:
                 payload = {job_id: asdict(value) for job_id, value in jobs.items()}
                 self.path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
             return cancelled
+
+    def cancel_incomplete_for_owner(self, owner: str, reason: str, except_job_id: str | None = None) -> int:
+        clean_owner = owner.strip()
+        if not clean_owner:
+            return 0
+        return self.cancel_active(reason, clean_owner, except_job_id)
 
     def reset_incomplete(self, reason: str = "Interrupted by service restart.") -> None:
         with self._lock:
