@@ -12,9 +12,10 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .config import Settings
+from .extractors import extract_pdf_margin_cleanup_preview
 from .jobs import JobStore, TtsQueue
 from .library import Library
-from .models import Book, Chapter, TtsJob
+from .models import Book, BookFormat, Chapter, TtsJob
 from .tts import TtsError, backend_from_name, eutherlink_health
 
 
@@ -60,6 +61,19 @@ class ChapterTextResponse(ChapterResponse):
 
 class CancelJobsResponse(BaseModel):
     cancelled: int
+
+
+class PdfCleanupSampleResponse(BaseModel):
+    page: int
+    removed: list[str]
+    before: str
+    after: str
+
+
+class PdfCleanupPreviewResponse(BaseModel):
+    page_count: int
+    candidate_lines: list[str]
+    sample_pages: list[PdfCleanupSampleResponse]
 
 
 class CreateJobRequest(BaseModel):
@@ -258,6 +272,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if chapter.index == chapter_index:
                 return ChapterTextResponse.from_chapter(chapter)
         raise HTTPException(status_code=404, detail="Chapter not found")
+
+    @app.get("/debug/books/{book_id}/pdf-cleanup", response_model=PdfCleanupPreviewResponse)
+    def preview_pdf_cleanup(book_id: str, max_pages: int = 8, lib: Library = Depends(get_library)) -> PdfCleanupPreviewResponse:
+        book = lib.get_book(book_id)
+        if book is None:
+            raise HTTPException(status_code=404, detail="Book not found")
+        if book.format != BookFormat.PDF:
+            raise HTTPException(status_code=400, detail="Book is not a PDF")
+        try:
+            return PdfCleanupPreviewResponse.model_validate(
+                extract_pdf_margin_cleanup_preview(book.path, max_pages=max(1, min(max_pages, 20)))
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @app.post("/books/{book_id}/tts", response_model=JobResponse, status_code=202)
     def create_tts_job(
