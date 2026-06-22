@@ -1,9 +1,28 @@
 from __future__ import annotations
 
+import wave
 from pathlib import Path
 
 from eutherbooks import tts
 
+
+def test_append_trailing_wav_silence_adds_padding(monkeypatch, tmp_path: Path) -> None:
+    output = tmp_path / "part.wav"
+    with wave.open(str(output), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(1000)
+        wav.writeframes(bytes([1, 0]) * 100)
+
+    monkeypatch.setenv("EUTHERBOOKS_TTS_TRAILING_SILENCE_MS", "200")
+
+    tts._append_trailing_wav_silence(output)
+
+    with wave.open(str(output), "rb") as wav:
+        assert wav.getnchannels() == 1
+        assert wav.getsampwidth() == 2
+        assert wav.getframerate() == 1000
+        assert wav.getnframes() == 300
 
 def test_piper_binary_prefers_configured_env(monkeypatch, tmp_path: Path) -> None:
     binary = tmp_path / "piper"

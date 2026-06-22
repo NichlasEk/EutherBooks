@@ -2,8 +2,19 @@ from __future__ import annotations
 
 from fastapi.routing import APIRoute
 
-from eutherbooks.api import create_app
+from eutherbooks.api import _append_pcm16_with_gap, create_app
 
+
+def test_append_pcm16_with_gap_inserts_configured_silence(monkeypatch) -> None:
+    from array import array
+
+    monkeypatch.setenv("EUTHERBOOKS_COMBINED_AUDIO_GAP_MS", "100")
+    left = array("h", [1, 2])
+    right = array("h", [3, 4])
+
+    combined = _append_pcm16_with_gap(left, right, channels=1, sample_rate=10)
+
+    assert list(combined) == [1, 2, 0, 3, 4]
 
 def test_books_endpoint_uses_dependency_not_query_param() -> None:
     app = create_app()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from array import array
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -468,8 +469,22 @@ def _append_pcm16_with_gap(left: array[int], right: array[int], channels: int, s
     if not right:
         return left
     out = array("h", left)
+    gap_ms = _combined_audio_gap_ms()
+    if gap_ms > 0:
+        gap_samples = int(sample_rate * (gap_ms / 1000.0)) * channels
+        out.extend(array("h", [0]) * gap_samples)
     out.extend(right)
     return out
+
+
+def _combined_audio_gap_ms() -> float:
+    try:
+        parsed = float(os.environ.get("EUTHERBOOKS_COMBINED_AUDIO_GAP_MS", "180"))
+    except ValueError:
+        parsed = 180.0
+    if parsed != parsed:
+        return 180.0
+    return min(500.0, max(0.0, parsed))
 
 
 def _eutherlink_voices() -> list[VoiceResponse]:

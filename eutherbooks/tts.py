@@ -10,6 +10,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import wave
 from pathlib import Path
 from shutil import which
 from typing import Any, Callable
@@ -275,6 +276,7 @@ class EutherLinkBackend(TtsBackend):
                         partial_tempo_sec = time.perf_counter() - tempo_started
                     else:
                         partial_tempo_sec = 0.0
+                    _append_trailing_wav_silence(temp_partial)
                     os.replace(temp_partial, partial_path)
                 finally:
                     temp_partial.unlink(missing_ok=True)
@@ -374,6 +376,7 @@ class EutherLinkBackend(TtsBackend):
                 )
             else:
                 tempo_sec = 0.0
+            _append_trailing_wav_silence(temp_output)
             if progress_callback is not None:
                 final_update = dict(status)
                 perf = dict(final_update.get("perf") or {}) if isinstance(final_update.get("perf"), dict) else {}
@@ -450,6 +453,32 @@ def _eutherlink_length_scale(value: Any) -> float:
     if parsed != parsed:
         return 1.0
     return min(1.6, max(0.65, parsed))
+
+
+def _append_trailing_wav_silence(path: Path) -> None:
+    silence_ms = _clamped_float(os.environ.get("EUTHERBOOKS_TTS_TRAILING_SILENCE_MS", "180"), 0.0, 500.0, 180.0)
+    if silence_ms <= 0:
+        return
+    temp_path = path.with_name(f".{path.name}.silence.tmp")
+    try:
+        with wave.open(str(path), "rb") as source:
+            params = source.getparams()
+            if params.sampwidth != 2 or params.comptype != "NONE":
+                return
+            frames = source.readframes(params.nframes)
+        silence_frames = int(params.framerate * (silence_ms / 1000.0))
+        if silence_frames <= 0:
+            return
+        silence = b"\0" * silence_frames * params.nchannels * params.sampwidth
+        with wave.open(str(temp_path), "wb") as output:
+            output.setparams(params)
+            output.writeframes(frames)
+            output.writeframes(silence)
+        os.replace(temp_path, path)
+    except (EOFError, wave.Error):
+        return
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 def _apply_eutherlink_length_scale(path: Path, length_scale: float) -> None:
