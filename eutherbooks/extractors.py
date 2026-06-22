@@ -60,10 +60,16 @@ def extract_text_file(path: Path) -> list[Chapter]:
 
 
 def extract_pdf(path: Path) -> list[Chapter]:
-    text = clean_pdf_repeated_margins(_extract_pdf_text(path)).strip()
-    if not text:
+    pages = _split_pdf_pages(_extract_pdf_text(path))
+    cleaned_pages = clean_pdf_page_repeated_margins(pages)
+    chapters = [
+        Chapter(index=index, title=f"Page {index + 1}", text=text)
+        for index, text in enumerate(page.strip() for page in cleaned_pages)
+        if len(text) >= 8
+    ]
+    if not chapters:
         return extract_pdf_ocr(path)
-    return split_plain_text(text)
+    return chapters
 
 
 def extract_pdf_ocr(path: Path) -> list[Chapter]:

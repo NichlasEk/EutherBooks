@@ -36,6 +36,7 @@ def test_extract_pdf_uses_pdftotext(monkeypatch, tmp_path: Path) -> None:
 
     assert calls == [["pdftotext", "-enc", "UTF-8", "-raw", str(book_path), "-"]]
     assert len(chapters) == 1
+    assert chapters[0].title == "Page 1"
     assert "Text från PDF." in chapters[0].text
 
 
@@ -126,3 +127,19 @@ def test_extract_pdf_prefers_raw_text_for_word_spacing(monkeypatch, tmp_path: Pa
     assert calls == [["pdftotext", "-enc", "UTF-8", "-raw", str(book_path), "-"]]
     assert "disqualified" in chapters[0].text
     assert "silly of me" in chapters[0].text
+
+
+
+def test_extract_pdf_preserves_pdf_page_indexes(monkeypatch, tmp_path: Path) -> None:
+    book_path = tmp_path / "pages.pdf"
+    book_path.write_bytes(b"%PDF-1.4")
+
+    def fake_run(command: list[str], **kwargs: object) -> CompletedProcess[str]:
+        return CompletedProcess(command, 0, stdout="First page body.\fSecond page body.", stderr="")
+
+    monkeypatch.setattr("eutherbooks.extractors.subprocess.run", fake_run)
+
+    chapters = extract_pdf(book_path)
+
+    assert [chapter.index for chapter in chapters] == [0, 1]
+    assert [chapter.title for chapter in chapters] == ["Page 1", "Page 2"]
