@@ -18,6 +18,7 @@ _PDF_PAGE_BREAK_RE = re.compile(r"\f+")
 _PDF_MARGIN_LINE_COUNT = 4
 _PDF_MARGIN_MIN_PAGES = 3
 _PDF_MARGIN_MIN_FRACTION = 0.35
+_PDF_TEXT_EXTRACTION_MODES = (("-raw",), ("-layout",), ())
 
 
 def clean_html_text(value: str) -> str:
@@ -59,23 +60,7 @@ def extract_text_file(path: Path) -> list[Chapter]:
 
 
 def extract_pdf(path: Path) -> list[Chapter]:
-    try:
-        result = subprocess.run(
-            ["pdftotext", "-enc", "UTF-8", "-layout", str(path), "-"],
-            check=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-    except FileNotFoundError as error:
-        raise RuntimeError("pdftotext is required to read PDF files") from error
-    except subprocess.CalledProcessError as error:
-        detail = (error.stderr or "").strip()
-        message = f"PDF text extraction failed: {detail}" if detail else "PDF text extraction failed"
-        raise RuntimeError(message) from error
-
-    text = clean_pdf_repeated_margins(result.stdout).strip()
+    text = clean_pdf_repeated_margins(_extract_pdf_text(path)).strip()
     if not text:
         return extract_pdf_ocr(path)
     return split_plain_text(text)
@@ -123,15 +108,13 @@ def clean_pdf_repeated_margins(text: str) -> str:
 
 def clean_pdf_page_repeated_margins(pages: list[str]) -> list[str]:
     candidates = _pdf_repeated_margin_candidates(pages)
-    if not candidates:
-        return pages
-    return [_remove_pdf_margin_lines(page, candidates) for page in pages]
+    return [_clean_pdf_page_margins(page, candidates) for page in pages]
 
 
 def pdf_margin_cleanup_preview(text: str, max_pages: int = 8) -> dict[str, object]:
     pages = _split_pdf_pages(text)
     candidates = _pdf_repeated_margin_candidates(pages)
-    cleaned_pages = [_remove_pdf_margin_lines(page, candidates) for page in pages]
+    cleaned_pages = [_clean_pdf_page_margins(page, candidates) for page in pages]
     samples = []
     for page_number, (before, after) in enumerate(zip(pages, cleaned_pages), start=1):
         if len(samples) >= max_pages:
@@ -153,22 +136,33 @@ def pdf_margin_cleanup_preview(text: str, max_pages: int = 8) -> dict[str, objec
 
 
 def extract_pdf_margin_cleanup_preview(path: Path, max_pages: int = 8) -> dict[str, object]:
-    try:
-        result = subprocess.run(
-            ["pdftotext", "-enc", "UTF-8", "-layout", str(path), "-"],
-            check=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-    except FileNotFoundError as error:
-        raise RuntimeError("pdftotext is required to read PDF files") from error
-    except subprocess.CalledProcessError as error:
-        detail = (error.stderr or "").strip()
+    return pdf_margin_cleanup_preview(_extract_pdf_text(path), max_pages=max_pages)
+
+
+def _extract_pdf_text(path: Path) -> str:
+    last_error: subprocess.CalledProcessError | None = None
+    for mode in _PDF_TEXT_EXTRACTION_MODES:
+        try:
+            result = subprocess.run(
+                ["pdftotext", "-enc", "UTF-8", *mode, str(path), "-"],
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except FileNotFoundError as error:
+            raise RuntimeError("pdftotext is required to read PDF files") from error
+        except subprocess.CalledProcessError as error:
+            last_error = error
+            continue
+        if result.stdout.strip():
+            return result.stdout
+    if last_error is not None:
+        detail = (last_error.stderr or "").strip()
         message = f"PDF text extraction failed: {detail}" if detail else "PDF text extraction failed"
-        raise RuntimeError(message) from error
-    return pdf_margin_cleanup_preview(result.stdout, max_pages=max_pages)
+        raise RuntimeError(message) from last_error
+    return ""
 
 
 def _split_pdf_pages(text: str) -> list[str]:
@@ -199,6 +193,37 @@ def _pdf_margin_lines(page: str) -> list[str]:
     top = lines[:_PDF_MARGIN_LINE_COUNT]
     bottom = lines[-_PDF_MARGIN_LINE_COUNT:] if len(lines) > _PDF_MARGIN_LINE_COUNT else []
     return top + bottom
+
+
+def _clean_pdf_page_margins(page: str, candidates: set[str]) -> str:
+    cleaned = _remove_pdf_page_number_lines(page)
+    if candidates:
+        cleaned = _remove_pdf_margin_lines(cleaned, candidates)
+    return cleaned
+
+
+def _remove_pdf_page_number_lines(page: str) -> str:
+    lines = page.splitlines()
+    nonempty_indexes = [index for index, line in enumerate(lines) if line.strip()]
+    removable = set(nonempty_indexes[:_PDF_MARGIN_LINE_COUNT])
+    removable.update(nonempty_indexes[-_PDF_MARGIN_LINE_COUNT:])
+    kept = [
+        line
+        for index, line in enumerate(lines)
+        if index not in removable or not _is_pdf_page_number_line(line)
+    ]
+    return "\n".join(kept).strip()
+
+
+def _is_pdf_page_number_line(line: str) -> bool:
+    normalized = _SPACE_RE.sub(" ", line).strip()
+    if not normalized or len(normalized) > 32:
+        return False
+    return bool(
+        re.fullmatch(r"[\W_]*\d{1,5}[\W_]*", normalized)
+        or re.fullmatch(r"[\W_]*\d{1,5}\s+(?:/+\s*)?\d{1,5}[\W_]*", normalized)
+        or re.fullmatch(r"[\W_]*\d{1,5}\s+of\s+\d{1,5}[\W_]*", normalized, flags=re.IGNORECASE)
+    )
 
 
 def _remove_pdf_margin_lines(page: str, candidates: set[str]) -> str:

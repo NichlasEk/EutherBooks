@@ -34,7 +34,7 @@ def test_extract_pdf_uses_pdftotext(monkeypatch, tmp_path: Path) -> None:
 
     chapters = extract_pdf(book_path)
 
-    assert calls == [["pdftotext", "-enc", "UTF-8", "-layout", str(book_path), "-"]]
+    assert calls == [["pdftotext", "-enc", "UTF-8", "-raw", str(book_path), "-"]]
     assert len(chapters) == 1
     assert "Text från PDF." in chapters[0].text
 
@@ -92,3 +92,37 @@ def test_pdf_margin_cleanup_matches_margin_titles_with_page_numbers() -> None:
     assert preview["candidate_lines"] == ["Peter Watts   6   Blindsight"]
     assert preview["sample_pages"][0]["removed"] == ["Peter Watts   6   Blindsight"]
     assert "Peter Watts" not in preview["sample_pages"][0]["after"]
+
+
+def test_pdf_cleanup_removes_margin_page_counters() -> None:
+    text = "\f".join(
+        [
+            "Chapter text one.\n\n1 194",
+            "Chapter text two.\n\n2 194",
+            "Chapter text three.\n\n3 194",
+        ]
+    )
+
+    preview = pdf_margin_cleanup_preview(text)
+
+    assert preview["sample_pages"][0]["removed"] == ["1 194"]
+    assert "1 194" not in preview["sample_pages"][0]["after"]
+    assert "Chapter text one." in preview["sample_pages"][0]["after"]
+
+
+def test_extract_pdf_prefers_raw_text_for_word_spacing(monkeypatch, tmp_path: Path) -> None:
+    book_path = tmp_path / "orphans.pdf"
+    book_path.write_bytes(b"%PDF-1.4")
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: object) -> CompletedProcess[str]:
+        calls.append(command)
+        return CompletedProcess(command, 0, stdout="I suppose we're disqualified. It's silly of me.", stderr="")
+
+    monkeypatch.setattr("eutherbooks.extractors.subprocess.run", fake_run)
+
+    chapters = extract_pdf(book_path)
+
+    assert calls == [["pdftotext", "-enc", "UTF-8", "-raw", str(book_path), "-"]]
+    assert "disqualified" in chapters[0].text
+    assert "silly of me" in chapters[0].text
