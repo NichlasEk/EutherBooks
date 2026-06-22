@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from fastapi.routing import APIRoute
 
-from eutherbooks.api import _append_pcm16_with_gap, create_app
+from eutherbooks.api import JobResponse, _append_pcm16_with_gap, create_app
+from eutherbooks.models import JobStatus, TtsJob
 
 
 def test_append_pcm16_with_gap_inserts_configured_silence(monkeypatch) -> None:
@@ -15,6 +16,49 @@ def test_append_pcm16_with_gap_inserts_configured_silence(monkeypatch) -> None:
     combined = _append_pcm16_with_gap(left, right, channels=1, sample_rate=10)
 
     assert list(combined) == [1, 2, 0, 3, 4]
+
+
+def test_running_job_response_hides_partial_audio_from_legacy_clients() -> None:
+    job = TtsJob(
+        id="job-1",
+        book_id="book-1",
+        status=JobStatus.RUNNING,
+        language="en",
+        voice="voice",
+        chapter_indexes=[1],
+        audio_files=["book/job/0001-000.wav"],
+        audio_durations=[12.5],
+        total_audio_files=3,
+        total_chunks=3,
+        current_chunk_index=1,
+    )
+
+    response = JobResponse.from_job(job)
+
+    assert response.audio_files == []
+    assert response.audio_durations == []
+    assert response.total_audio_files == 3
+
+
+def test_done_job_response_includes_final_audio() -> None:
+    job = TtsJob(
+        id="job-1",
+        book_id="book-1",
+        status=JobStatus.DONE,
+        language="en",
+        voice="voice",
+        chapter_indexes=[1],
+        audio_files=["book/job/0001-000.stream-001.wav", "book/job/0001-000.wav"],
+        audio_durations=[6.0, 12.5],
+        total_audio_files=1,
+        total_chunks=1,
+        current_chunk_index=1,
+    )
+
+    response = JobResponse.from_job(job)
+
+    assert response.audio_files == ["book/job/0001-000.wav"]
+    assert response.audio_durations == [12.5]
 
 def test_books_endpoint_uses_dependency_not_query_param() -> None:
     app = create_app()

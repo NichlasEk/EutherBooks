@@ -16,7 +16,7 @@ from .config import Settings
 from .extractors import extract_pdf_margin_cleanup_preview
 from .jobs import JobStore, TtsQueue
 from .library import Library
-from .models import Book, BookFormat, Chapter, TtsJob
+from .models import JobStatus, Book, BookFormat, Chapter, TtsJob
 from .tts import TtsError, backend_from_name, eutherlink_health
 
 
@@ -139,11 +139,13 @@ class JobResponse(BaseModel):
 
     @classmethod
     def from_job(cls, job: TtsJob) -> "JobResponse":
-        playable_audio = [
-            (audio_path, job.audio_durations[index] if index < len(job.audio_durations) else 0.0)
-            for index, audio_path in enumerate(job.audio_files)
-            if ".stream-" not in audio_path
-        ]
+        playable_audio: list[tuple[str, float]] = []
+        if job.status is JobStatus.DONE:
+            playable_audio = [
+                (audio_path, job.audio_durations[index] if index < len(job.audio_durations) else 0.0)
+                for index, audio_path in enumerate(job.audio_files)
+                if ".stream-" not in audio_path
+            ]
         return cls(
             id=job.id,
             book_id=job.book_id,
