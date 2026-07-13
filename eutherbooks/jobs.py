@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import sqlite3
+import subprocess
 import threading
 import time
 import wave
@@ -25,6 +26,7 @@ LOGGER = logging.getLogger("eutherbooks.jobs")
 
 DEFAULT_MAX_CHARS_PER_AUDIO_FILE = 4_000
 DEFAULT_PIPER_MAX_CHARS_PER_AUDIO_FILE = 900
+DEFAULT_MP3_BITRATE_KBPS = 64
 
 
 def _worker_parallelism() -> int:
@@ -98,6 +100,20 @@ class JobStore:
             with self._connect() as connection:
                 row = connection.execute("SELECT payload FROM jobs WHERE id = ?", (job_id,)).fetchone()
             return _job_from_dict(json.loads(row[0])) if row else None
+
+    def status_counts(self) -> dict[str, int]:
+        with self._lock:
+            self._import_legacy_if_needed()
+            with self._connect() as connection:
+                rows = connection.execute("SELECT status, COUNT(*) FROM jobs GROUP BY status").fetchall()
+            return {str(status): int(count) for status, count in rows}
+
+    def database_bytes(self) -> int:
+        return sum(
+            path.stat().st_size
+            for path in (self.db_path, self.db_path.with_name(f"{self.db_path.name}-wal"), self.db_path.with_name(f"{self.db_path.name}-shm"))
+            if path.exists()
+        )
 
     def put(self, job: TtsJob) -> None:
         with self._lock:
@@ -374,8 +390,10 @@ class TtsQueue:
                     chunks = _split_for_tts(chapter.text, max_chars=_max_chars_for_options(self.backend.name, job.tts_options))
                     for chunk_index, chunk in enumerate(chunks):
                         self._raise_if_cancelled(job.id)
-                        relative = Path(job.book_id) / job.id / f"{chapter_index:04d}-{chunk_index:03d}.wav"
-                        output_path = self.audio_dir / relative
+                        wav_relative = Path(job.book_id) / job.id / f"{chapter_index:04d}-{chunk_index:03d}.wav"
+                        relative = _published_audio_relative(wav_relative)
+                        output_path = self.audio_dir / wav_relative
+                        published_path = self.audio_dir / relative
                         job.current_chapter_index = chapter_index
                         job.current_chunk_index = len(audio_files)
                         job.worker_progress = 0.0
@@ -392,7 +410,7 @@ class TtsQueue:
                             chunk_index + 1,
                             len(chunks),
                             output_path,
-                            output_path.exists() and output_path.stat().st_size > 0,
+                            published_path.exists() and published_path.stat().st_size > 0,
                             job.voice,
                             job.language,
                             job.tts_options.get("seed"),
@@ -400,7 +418,7 @@ class TtsQueue:
                             len(chunk),
                             _short_sha256(chunk.encode("utf-8")),
                         )
-                        if not output_path.exists() or output_path.stat().st_size == 0:
+                        if not published_path.exists() and (not output_path.exists() or output_path.stat().st_size == 0):
                             part_started = time.perf_counter()
                             self.backend.synthesize(
                                 chunk,
@@ -431,12 +449,14 @@ class TtsQueue:
                                 }
                             )
                             self._raise_if_cancelled(job.id)
+                        duration = _audio_duration_seconds(published_path) if published_path.exists() else _wav_duration_seconds(output_path)
+                        published_path = _finalize_generated_audio(output_path)
                         relative_posix = relative.as_posix()
                         self._replace_partial_audio_with_final(audio_files, audio_durations, seen_audio, relative_posix)
                         if relative_posix not in seen_audio:
                             seen_audio.add(relative_posix)
                             audio_files.append(relative_posix)
-                            audio_durations.append(_wav_duration_seconds(output_path))
+                            audio_durations.append(duration)
                             job.audio_files = audio_files
                             job.audio_durations = audio_durations
                             job.current_chunk_index = len(audio_files)
@@ -488,9 +508,11 @@ class TtsQueue:
             for chapter in chapters:
                 chunks = _split_for_tts(chapter.text, max_chars=_max_chars_for_options(self.backend.name, job.tts_options))
                 for chunk_index, chunk in enumerate(chunks):
-                    relative = Path(job.book_id) / job.id / f"{chapter.index:04d}-{chunk_index:03d}.wav"
+                    wav_relative = Path(job.book_id) / job.id / f"{chapter.index:04d}-{chunk_index:03d}.wav"
+                    relative = _published_audio_relative(wav_relative)
                     relative_posix = relative.as_posix()
-                    output_path = self.audio_dir / relative
+                    output_path = self.audio_dir / wav_relative
+                    published_path = self.audio_dir / relative
                     job.current_chapter_index = chapter.index
                     job.current_chunk_index = len(audio_files)
                     job.worker_progress = 0.0
@@ -507,7 +529,7 @@ class TtsQueue:
                         chunk_index + 1,
                         len(chunks),
                         output_path,
-                        output_path.exists() and output_path.stat().st_size > 0,
+                        published_path.exists() and published_path.stat().st_size > 0,
                         job.voice,
                         job.language,
                         job.tts_options.get("seed"),
@@ -515,7 +537,7 @@ class TtsQueue:
                         len(chunk),
                         _short_sha256(chunk.encode("utf-8")),
                     )
-                    if not output_path.exists() or output_path.stat().st_size == 0:
+                    if not published_path.exists() and (not output_path.exists() or output_path.stat().st_size == 0):
                         self.backend.synthesize(
                             chunk,
                             output_path,
@@ -538,11 +560,13 @@ class TtsQueue:
                                 ),
                             ),
                         )
+                    duration = _audio_duration_seconds(published_path) if published_path.exists() else _wav_duration_seconds(output_path)
+                    published_path = _finalize_generated_audio(output_path)
                     self._replace_partial_audio_with_final(audio_files, audio_durations, seen_audio, relative_posix)
                     if relative_posix not in seen_audio:
                         seen_audio.add(relative_posix)
                         audio_files.append(relative_posix)
-                        audio_durations.append(_wav_duration_seconds(output_path))
+                        audio_durations.append(duration)
                         job.audio_files = audio_files
                         job.audio_durations = audio_durations
                         job.total_audio_files = max(job.total_audio_files, len(audio_files), total_pages - start_index)
@@ -644,7 +668,7 @@ class TtsQueue:
         seen_audio: set[str],
         final_relative: str,
     ) -> None:
-        partial_prefix = final_relative.removesuffix(".wav") + ".stream-"
+        partial_prefix = str(Path(final_relative).with_suffix("")) + ".stream-"
         indexes = [
             index
             for index, audio_path in enumerate(audio_files)
@@ -724,6 +748,92 @@ def _wav_duration_seconds(path: Path) -> float:
                 return 0.0
             return round(wav_file.getnframes() / rate, 3)
     except (OSError, EOFError, wave.Error):
+        return 0.0
+
+
+def _audio_output_format() -> str:
+    return "mp3" if os.environ.get("EUTHERBOOKS_AUDIO_FORMAT", "wav").strip().lower() == "mp3" else "wav"
+
+
+def _mp3_bitrate_kbps() -> int:
+    try:
+        return max(48, min(192, int(os.environ.get("EUTHERBOOKS_MP3_BITRATE_KBPS", DEFAULT_MP3_BITRATE_KBPS))))
+    except ValueError:
+        return DEFAULT_MP3_BITRATE_KBPS
+
+
+def _published_audio_relative(wav_relative: Path) -> Path:
+    return wav_relative.with_suffix(".mp3") if _audio_output_format() == "mp3" else wav_relative
+
+
+def _finalize_generated_audio(wav_path: Path) -> Path:
+    if _audio_output_format() != "mp3":
+        return wav_path
+    output_path = wav_path.with_suffix(".mp3")
+    if output_path.exists() and output_path.stat().st_size > 0:
+        wav_path.unlink(missing_ok=True)
+        return output_path
+    if not wav_path.exists() or wav_path.stat().st_size <= 0:
+        raise RuntimeError(f"Generated WAV is missing: {wav_path}")
+    temp_path = output_path.with_name(f".{output_path.name}.{os.getpid()}.{threading.get_ident()}.tmp.mp3")
+    temp_path.unlink(missing_ok=True)
+    command = [
+        os.environ.get("EUTHERBOOKS_FFMPEG_BIN", "ffmpeg"),
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-y",
+        "-i",
+        str(wav_path),
+        "-map_metadata",
+        "-1",
+        "-ac",
+        "1",
+        "-codec:a",
+        "libmp3lame",
+        "-b:a",
+        f"{_mp3_bitrate_kbps()}k",
+        str(temp_path),
+    ]
+    try:
+        subprocess.run(command, check=True, timeout=300, capture_output=True)
+        if not temp_path.exists() or temp_path.stat().st_size <= 0:
+            raise RuntimeError("ffmpeg produced an empty MP3")
+        os.replace(temp_path, output_path)
+        wav_path.unlink(missing_ok=True)
+        return output_path
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"MP3 encoding timed out for {wav_path.name}") from exc
+    except subprocess.CalledProcessError as exc:
+        detail = exc.stderr.decode("utf-8", errors="replace").strip()[-500:]
+        raise RuntimeError(f"MP3 encoding failed for {wav_path.name}: {detail}") from exc
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def _audio_duration_seconds(path: Path) -> float:
+    if path.suffix.lower() == ".wav":
+        return _wav_duration_seconds(path)
+    try:
+        result = subprocess.run(
+            [
+                os.environ.get("EUTHERBOOKS_FFPROBE_BIN", "ffprobe"),
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            check=True,
+            timeout=30,
+            capture_output=True,
+            text=True,
+        )
+        return round(max(0.0, float(result.stdout.strip())), 3)
+    except (OSError, ValueError, subprocess.SubprocessError):
         return 0.0
 
 

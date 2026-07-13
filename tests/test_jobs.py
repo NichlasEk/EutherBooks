@@ -4,7 +4,15 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from eutherbooks.jobs import JobStore, TtsQueue, _max_chars_for_backend, _normalized_tts_options, _split_for_tts
+from eutherbooks.jobs import (
+    JobStore,
+    TtsQueue,
+    _finalize_generated_audio,
+    _max_chars_for_backend,
+    _normalized_tts_options,
+    _published_audio_relative,
+    _split_for_tts,
+)
 from eutherbooks.ids import stable_job_id
 from eutherbooks.library import Library
 from eutherbooks.models import JobStatus, TtsJob
@@ -362,6 +370,41 @@ def test_final_audio_replaces_stream_partials(tmp_path: Path) -> None:
     assert audio_files == ["book/job/0000-001.stream-001.wav"]
     assert audio_durations == [8.0]
     assert seen_audio == {"book/job/0000-001.stream-001.wav"}
+
+
+def test_final_mp3_audio_replaces_wav_stream_partials(tmp_path: Path) -> None:
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    queue = TtsQueue(Library(library_dir), JobStore(tmp_path / "data"), RecordingBackend(), tmp_path / "audio")
+    audio_files = ["book/job/0000-000.stream-001.wav"]
+    audio_durations = [2.0]
+    seen_audio = set(audio_files)
+
+    queue._replace_partial_audio_with_final(audio_files, audio_durations, seen_audio, "book/job/0000-000.mp3")
+
+    assert audio_files == []
+    assert audio_durations == []
+    assert seen_audio == set()
+
+
+def test_finalize_generated_audio_encodes_atomically(monkeypatch, tmp_path: Path) -> None:
+    source = tmp_path / "part.wav"
+    source.write_bytes(b"wav data")
+    monkeypatch.setenv("EUTHERBOOKS_AUDIO_FORMAT", "mp3")
+    monkeypatch.setenv("EUTHERBOOKS_MP3_BITRATE_KBPS", "72")
+
+    def fake_run(command, **_kwargs):
+        assert "72k" in command
+        Path(command[-1]).write_bytes(b"mp3 data")
+
+    monkeypatch.setattr("eutherbooks.jobs.subprocess.run", fake_run)
+
+    output = _finalize_generated_audio(source)
+
+    assert output == tmp_path / "part.mp3"
+    assert output.read_bytes() == b"mp3 data"
+    assert not source.exists()
+    assert _published_audio_relative(Path("book/job/part.wav")) == Path("book/job/part.mp3")
 
 
 def test_split_for_tts_honors_max_chars() -> None:

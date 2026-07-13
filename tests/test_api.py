@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi.routing import APIRoute
 
-from eutherbooks.api import JobResponse, _append_pcm16_with_gap, create_app
+from eutherbooks.api import JobResponse, _append_pcm16_with_gap, _audio_media_type, create_app
 from eutherbooks.models import JobStatus, TtsJob
 
 
@@ -16,6 +16,13 @@ def test_append_pcm16_with_gap_inserts_configured_silence(monkeypatch) -> None:
     combined = _append_pcm16_with_gap(left, right, channels=1, sample_rate=10)
 
     assert list(combined) == [1, 2, 0, 3, 4]
+
+
+def test_audio_media_type_supports_compact_output() -> None:
+    from pathlib import Path
+
+    assert _audio_media_type(Path("part.mp3")) == "audio/mpeg"
+    assert _audio_media_type(Path("part.wav")) == "audio/wav"
 
 
 def test_running_job_response_hides_partial_audio_from_legacy_clients() -> None:

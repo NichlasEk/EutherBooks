@@ -4,6 +4,7 @@ from array import array
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import uuid
 import wave
@@ -14,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from .config import Settings
 from .extractors import extract_pdf_margin_cleanup_preview
-from .jobs import JobStore, TtsQueue, TtsQueueFullError
+from .jobs import JobStore, TtsQueue, TtsQueueFullError, _audio_output_format, _queue_capacity, _worker_parallelism
 from .library import Library
 from .models import JobStatus, Book, BookFormat, Chapter, TtsJob
 from .tts import TtsError, backend_from_name, eutherlink_health
@@ -222,6 +223,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "audio_free_bytes": audio_usage.free,
                 "audio_total_bytes": audio_usage.total,
                 "audio_used_bytes": audio_usage.used,
+                "audio_format": _audio_output_format(),
+                "jobs_database_bytes": store.database_bytes(),
+            },
+            "jobs": store.status_counts(),
+            "queue": {
+                "parallelism": _worker_parallelism(),
+                "capacity": _queue_capacity(),
             },
         }
         if backend.name == "eutherlink":
@@ -383,19 +391,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         missing = [path for path in source_paths if not path.exists()]
         if missing:
             raise HTTPException(status_code=404, detail="Audio not found")
-        combined_path = settings.audio_dir / job.book_id / job.id / "combined.wav"
+        all_wav = all(path.suffix.lower() == ".wav" for path in source_paths)
+        combined_path = settings.audio_dir / job.book_id / job.id / ("combined.wav" if all_wav else "combined.mp3")
         try:
-            _ensure_combined_wav(source_paths, combined_path)
+            if all_wav:
+                _ensure_combined_wav(source_paths, combined_path)
+            else:
+                _ensure_combined_mp3(source_paths, combined_path)
         except ValueError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-        return FileResponse(combined_path, media_type="audio/wav", headers={"Cache-Control": "no-store"})
+        return FileResponse(combined_path, media_type=_audio_media_type(combined_path), headers={"Cache-Control": "no-store"})
 
     @app.get("/audio/{audio_path:path}")
     def get_audio(audio_path: str) -> FileResponse:
         path = _resolve_audio_path(settings.audio_dir, audio_path)
         if not path.exists():
             raise HTTPException(status_code=404, detail="Audio not found")
-        return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "no-store"})
+        return FileResponse(path, media_type=_audio_media_type(path), headers={"Cache-Control": "no-store"})
 
     return app
 
@@ -429,6 +441,55 @@ def _ensure_combined_wav(source_paths: list[Path], combined_path: Path) -> None:
         temp_path.replace(combined_path)
     finally:
         temp_path.unlink(missing_ok=True)
+
+
+def _ensure_combined_mp3(source_paths: list[Path], combined_path: Path) -> None:
+    newest_source = max(path.stat().st_mtime_ns for path in source_paths)
+    if combined_path.exists() and combined_path.stat().st_mtime_ns >= newest_source:
+        return
+    combined_path.parent.mkdir(parents=True, exist_ok=True)
+    token = uuid.uuid4().hex
+    list_path = combined_path.with_name(f".combined-{token}.txt")
+    temp_path = combined_path.with_name(f".{combined_path.name}.{token}.tmp.mp3")
+    try:
+        list_path.write_text(
+            "".join(f"file '{str(path).replace(chr(39), chr(39) + chr(92) + chr(39) + chr(39))}'\n" for path in source_paths),
+            encoding="utf-8",
+        )
+        command = [
+            os.environ.get("EUTHERBOOKS_FFMPEG_BIN", "ffmpeg"),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(list_path),
+            "-ac",
+            "1",
+            "-codec:a",
+            "libmp3lame",
+            "-b:a",
+            f"{max(48, min(192, int(os.environ.get('EUTHERBOOKS_MP3_BITRATE_KBPS', '64'))))}k",
+            str(temp_path),
+        ]
+        subprocess.run(command, check=True, timeout=900, capture_output=True)
+        if not temp_path.exists() or temp_path.stat().st_size <= 0:
+            raise ValueError("Audio combination produced an empty MP3")
+        temp_path.replace(combined_path)
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        raise ValueError(f"Could not combine MP3 audio: {exc}") from exc
+    finally:
+        list_path.unlink(missing_ok=True)
+        temp_path.unlink(missing_ok=True)
+
+
+def _audio_media_type(path: Path) -> str:
+    return "audio/mpeg" if path.suffix.lower() == ".mp3" else "audio/wav"
 
 
 def _write_smoothed_combined_wav(source_paths: list[Path], output_path: Path) -> None:
