@@ -405,6 +405,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/audio/{audio_path:path}")
     def get_audio(audio_path: str) -> FileResponse:
         path = _resolve_audio_path(settings.audio_dir, audio_path)
+        if not path.exists() and path.suffix.lower() == ".wav" and path.with_suffix(".mp3").exists():
+            path = path.with_suffix(".mp3")
         if not path.exists():
             raise HTTPException(status_code=404, detail="Audio not found")
         return FileResponse(path, media_type=_audio_media_type(path), headers={"Cache-Control": "no-store"})

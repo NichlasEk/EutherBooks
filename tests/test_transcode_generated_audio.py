@@ -4,7 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from scripts.transcode_generated_audio import load_candidates, update_job_path
+from scripts.transcode_generated_audio import cleanup_unreferenced_wavs, load_candidates, update_job_path
 
 
 def test_transcode_candidate_updates_sqlite_job_path(tmp_path: Path) -> None:
@@ -39,3 +39,7 @@ def test_transcode_candidate_updates_sqlite_job_path(tmp_path: Path) -> None:
     with sqlite3.connect(db_path) as connection:
         updated = json.loads(connection.execute("SELECT payload FROM jobs WHERE id = 'job'").fetchone()[0])
     assert updated["audio_files"] == ["book/job/0000-000.mp3"]
+
+    removed, reclaimed = cleanup_unreferenced_wavs(db_path, audio_dir, 0)
+    assert (removed, reclaimed) == (1, 3)
+    assert not source.exists()

@@ -771,7 +771,8 @@ def _finalize_generated_audio(wav_path: Path) -> Path:
         return wav_path
     output_path = wav_path.with_suffix(".mp3")
     if output_path.exists() and output_path.stat().st_size > 0:
-        wav_path.unlink(missing_ok=True)
+        if os.environ.get("EUTHERBOOKS_KEEP_SOURCE_WAV", "").strip().lower() not in {"1", "true", "yes"}:
+            wav_path.unlink(missing_ok=True)
         return output_path
     if not wav_path.exists() or wav_path.stat().st_size <= 0:
         raise RuntimeError(f"Generated WAV is missing: {wav_path}")
@@ -801,7 +802,8 @@ def _finalize_generated_audio(wav_path: Path) -> Path:
         if not temp_path.exists() or temp_path.stat().st_size <= 0:
             raise RuntimeError("ffmpeg produced an empty MP3")
         os.replace(temp_path, output_path)
-        wav_path.unlink(missing_ok=True)
+        if os.environ.get("EUTHERBOOKS_KEEP_SOURCE_WAV", "").strip().lower() not in {"1", "true", "yes"}:
+            wav_path.unlink(missing_ok=True)
         return output_path
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"MP3 encoding timed out for {wav_path.name}") from exc

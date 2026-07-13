@@ -79,6 +79,30 @@ def update_job_path(db_path: Path, candidate: Candidate) -> bool:
         return True
 
 
+def cleanup_unreferenced_wavs(db_path: Path, audio_dir: Path, min_age_seconds: float) -> tuple[int, int]:
+    with sqlite3.connect(db_path, timeout=30) as connection:
+        rows = connection.execute("SELECT payload FROM jobs").fetchall()
+    referenced = {
+        str(relative)
+        for (raw_payload,) in rows
+        for relative in json.loads(raw_payload).get("audio_files", [])
+    }
+    now = time.time()
+    removed = 0
+    reclaimed = 0
+    for path in audio_dir.glob("*/*/*.wav"):
+        relative = path.relative_to(audio_dir).as_posix()
+        if relative in referenced or ".stream-" in relative or not path.with_suffix(".mp3").exists():
+            continue
+        if min_age_seconds and now - path.stat().st_mtime < min_age_seconds:
+            continue
+        size = path.stat().st_size
+        path.unlink(missing_ok=True)
+        removed += 1
+        reclaimed += size
+    return removed, reclaimed
+
+
 def format_bytes(value: int) -> str:
     amount = float(value)
     for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
@@ -95,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--bitrate-kbps", type=int, default=64)
     parser.add_argument("--min-age-hours", type=float, default=2.0)
     parser.add_argument("--max-files", type=int, default=100)
+    parser.add_argument("--delete-source-after-days", type=float, default=7.0)
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
 
@@ -113,6 +138,7 @@ def main(argv: list[str] | None = None) -> int:
 
     os.environ["EUTHERBOOKS_AUDIO_FORMAT"] = "mp3"
     os.environ["EUTHERBOOKS_MP3_BITRATE_KBPS"] = str(max(48, min(192, args.bitrate_kbps)))
+    os.environ["EUTHERBOOKS_KEEP_SOURCE_WAV"] = "1"
     converted = 0
     output_bytes = 0
     for candidate in candidates:
@@ -120,11 +146,16 @@ def main(argv: list[str] | None = None) -> int:
         if update_job_path(db_path, candidate):
             converted += 1
             output_bytes += candidate.target_path.stat().st_size
+            candidate.source_path.touch()
             print(f"converted {candidate.relative_path} -> {candidate.target_path.name}")
-    reclaimed = max(0, source_bytes - output_bytes)
+    removed, reclaimed = cleanup_unreferenced_wavs(
+        db_path,
+        audio_dir,
+        max(0.0, args.delete_source_after_days) * 24 * 3600,
+    )
     print(
         f"converted: {converted}, MP3 output: {format_bytes(output_bytes)}, "
-        f"reclaimed: {format_bytes(reclaimed)}"
+        f"expired WAV removed: {removed}, reclaimed: {format_bytes(reclaimed)}"
     )
     return 0
 
