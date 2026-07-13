@@ -35,7 +35,6 @@ library/
   svenska/
     selma-lagerlof/
       nils-holgersson.epub
-      bornholm-2026.pdf
   english/
     sample.txt
 ```
