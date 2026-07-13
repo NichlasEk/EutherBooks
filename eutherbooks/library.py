@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import re
 import time
+from functools import lru_cache
 from pathlib import Path
 
-from .extractors import extract_chapters, extract_epub_metadata
+from .extractors import extract_chapters, extract_epub_metadata, pdf_ocr_cached_page_count
 from .ids import stable_book_id
 from .models import Book, BookFormat, Chapter
 
@@ -35,7 +36,9 @@ class Library:
         book = self.get_book(book_id)
         if book is None:
             raise KeyError(f"Unknown book id: {book_id}")
-        return extract_chapters(book.path)
+        stat = book.path.stat()
+        ocr_pages = pdf_ocr_cached_page_count(book.path) if book.path.suffix.lower() == ".pdf" else 0
+        return list(_cached_chapters(str(book.path), stat.st_size, stat.st_mtime_ns, ocr_pages))
 
     def import_book_bytes(self, filename: str, data: bytes) -> Book:
         clean_name = clean_book_filename(filename)
@@ -97,3 +100,8 @@ def unique_book_path(path: Path) -> Path:
         if not candidate.exists():
             return candidate
     return path.with_name(f"{stem}-{time.time_ns()}{suffix}")
+
+
+@lru_cache(maxsize=64)
+def _cached_chapters(path: str, _size: int, _mtime_ns: int, _ocr_pages: int) -> tuple[Chapter, ...]:
+    return tuple(extract_chapters(Path(path)))

@@ -14,7 +14,7 @@ from eutherbooks.tts import (
 )
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Pre-generate Dots TTS preset voice reference WAVs.")
     parser.add_argument("--model", choices=["dots.tts-mf", "dots.tts-soar", "all"], default="all")
     parser.add_argument("--voice", action="append", default=[], help="Preset voice id to include; may be repeated.")
@@ -26,7 +26,7 @@ def main() -> int:
         type=float,
         default=float(os.environ.get("EUTHERBOOKS_EUTHERLINK_POLL_INTERVAL", "1.0")),
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     wanted_voices = set(args.voice)
     voices = [

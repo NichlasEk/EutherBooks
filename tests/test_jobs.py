@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from dataclasses import asdict
 from pathlib import Path
 
 from eutherbooks.jobs import JobStore, TtsQueue, _max_chars_for_backend, _normalized_tts_options, _split_for_tts
@@ -97,6 +99,45 @@ def test_job_store_round_trips_jobs(tmp_path: Path) -> None:
     assert loaded.current_chapter_index == 0
     assert loaded.current_chunk_index == 1
     assert loaded.total_chunks == 1
+    assert store.db_path.exists()
+
+
+def test_job_store_filters_recent_jobs(tmp_path: Path) -> None:
+    store = JobStore(tmp_path)
+    for index, owner in enumerate(("nichlas", "other", "nichlas")):
+        store.put(
+            TtsJob(
+                id=f"job{index}",
+                book_id="book1" if index < 2 else "book2",
+                status=JobStatus.DONE,
+                language="sv",
+                voice="sv",
+                chapter_indexes=[index],
+                owner=owner,
+            )
+        )
+
+    assert [job.id for job in store.query_jobs(owner="nichlas", limit=10)] == ["job0", "job2"]
+    assert [job.id for job in store.query_jobs(book_id="book1", limit=1)] == ["job1"]
+
+
+def test_job_store_does_not_reimport_legacy_jobs_after_database_is_emptied(tmp_path: Path) -> None:
+    legacy = TtsJob(
+        id="legacy",
+        book_id="book1",
+        status=JobStatus.DONE,
+        language="sv",
+        voice="sv",
+        chapter_indexes=[0],
+    )
+    (tmp_path / "jobs.json").write_text(json.dumps({legacy.id: asdict(legacy)}, default=str), encoding="utf-8")
+    store = JobStore(tmp_path)
+    assert store.get("legacy") is not None
+
+    with store._connect() as connection:
+        connection.execute("DELETE FROM jobs")
+
+    assert store.list_jobs() == []
 
 
 def test_job_store_backfills_legacy_progress_fields(tmp_path: Path) -> None:

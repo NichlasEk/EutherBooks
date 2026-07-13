@@ -39,6 +39,6 @@ def test_prewarm_deduplicates_mf_and_soar(monkeypatch, tmp_path) -> None:
 
     monkeypatch.setattr(prewarm_dots_preset_voices, "_dots_preset_reference_path", fake_reference_path)
 
-    assert prewarm_dots_preset_voices.main() == 0
+    assert prewarm_dots_preset_voices.main([]) == 0
     assert len(calls) == 1
     assert calls[0]["voice_id"] == "en-female-soft"

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import shutil
 import time
 from collections import defaultdict
@@ -66,9 +67,17 @@ def directory_mtime(path: Path) -> float:
 
 
 def load_jobs(jobs_path: Path, audio_dir: Path) -> dict[str, JobRecord]:
-    if not jobs_path.exists():
+    db_path = jobs_path.with_name("jobs.sqlite3")
+    if db_path.exists():
+        with sqlite3.connect(db_path, timeout=30) as connection:
+            rows = connection.execute("SELECT id, payload, updated_at FROM jobs").fetchall()
+        raw = {str(job_id): json.loads(payload) for job_id, payload, _updated_at in rows}
+        updated = {str(job_id): float(updated_at) for job_id, _payload, updated_at in rows}
+    elif jobs_path.exists():
+        raw = json.loads(jobs_path.read_text(encoding="utf-8"))
+        updated = {}
+    else:
         return {}
-    raw = json.loads(jobs_path.read_text(encoding="utf-8"))
     records: dict[str, JobRecord] = {}
     for job_id, data in raw.items():
         if not isinstance(data, dict):
@@ -79,10 +88,25 @@ def load_jobs(jobs_path: Path, audio_dir: Path) -> dict[str, JobRecord]:
             job_id=str(job_id),
             data=data,
             job_dir=job_dir,
-            modified_at=directory_mtime(job_dir),
+            modified_at=max(directory_mtime(job_dir), updated.get(str(job_id), 0.0)),
             size_bytes=directory_size(job_dir),
         )
     return records
+
+
+def delete_job_records(data_dir: Path, job_ids: set[str], records: dict[str, JobRecord]) -> None:
+    db_path = data_dir / "jobs.sqlite3"
+    if db_path.exists():
+        with sqlite3.connect(db_path, timeout=30) as connection:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.executemany("DELETE FROM jobs WHERE id = ?", ((job_id,) for job_id in job_ids))
+        return
+    jobs_path = data_dir / "jobs.json"
+    if jobs_path.exists():
+        kept_payload = {job_id: record.data for job_id, record in records.items() if job_id not in job_ids}
+        temp_path = jobs_path.with_name(f".{jobs_path.name}.tmp")
+        temp_path.write_text(json.dumps(kept_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        temp_path.replace(jobs_path)
 
 
 def select_jobs_to_keep(records: dict[str, JobRecord], keep_per_chapter: int, failed_keep: int, min_age_seconds: float) -> set[str]:
@@ -314,9 +338,7 @@ def main() -> int:
         shutil.rmtree(path, ignore_errors=True)
     for path in backup_files:
         path.unlink(missing_ok=True)
-    if jobs_path.exists():
-        kept_payload = {job_id: records[job_id].data for job_id in records if job_id in keep_job_ids}
-        jobs_path.write_text(json.dumps(kept_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    delete_job_records(data_dir, delete_job_ids, records)
     remove_empty_parents(audio_dir)
     return 0
 

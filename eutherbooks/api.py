@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from .config import Settings
 from .extractors import extract_pdf_margin_cleanup_preview
-from .jobs import JobStore, TtsQueue
+from .jobs import JobStore, TtsQueue, TtsQueueFullError
 from .library import Library
 from .models import JobStatus, Book, BookFormat, Chapter, TtsJob
 from .tts import TtsError, backend_from_name, eutherlink_health
@@ -246,7 +246,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/books/upload", response_model=BookResponse, status_code=201)
     async def upload_book(request: Request, name: str, lib: Library = Depends(get_library)) -> BookResponse:
         try:
-            book = lib.import_book_bytes(name, await request.body())
+            max_bytes = max(1, int(os.environ.get("EUTHERBOOKS_UPLOAD_MAX_MIB", "100"))) * 1024 * 1024
+            content_length = request.headers.get("content-length")
+            if content_length and int(content_length) > max_bytes:
+                raise HTTPException(status_code=413, detail=f"Book upload exceeds {max_bytes // (1024 * 1024)} MiB")
+            chunks: list[bytes] = []
+            size = 0
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > max_bytes:
+                    raise HTTPException(status_code=413, detail=f"Book upload exceeds {max_bytes // (1024 * 1024)} MiB")
+                chunks.append(chunk)
+            book = lib.import_book_bytes(name, b"".join(chunks))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return BookResponse.from_book(book, settings.library_dir)
@@ -330,11 +341,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Book not found") from exc
         except TtsError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+        except TtsQueueFullError as exc:
+            raise HTTPException(status_code=429, detail=str(exc), headers={"Retry-After": "10"}) from exc
         return JobResponse.from_job(job)
 
     @app.get("/jobs", response_model=list[JobResponse])
-    def list_jobs(job_store: JobStore = Depends(get_store)) -> list[JobResponse]:
-        return [JobResponse.from_job(job) for job in job_store.list_jobs()]
+    def list_jobs(
+        owner: str | None = None,
+        book_id: str | None = None,
+        status: str | None = None,
+        limit: int = 200,
+        job_store: JobStore = Depends(get_store),
+    ) -> list[JobResponse]:
+        clean_limit = max(1, min(limit, 2000))
+        return [
+            JobResponse.from_job(job)
+            for job in job_store.query_jobs(owner=owner, book_id=book_id, status=status, limit=clean_limit)
+        ]
 
     @app.get("/jobs/{job_id}", response_model=JobResponse)
     def get_job(job_id: str, job_store: JobStore = Depends(get_store)) -> JobResponse:

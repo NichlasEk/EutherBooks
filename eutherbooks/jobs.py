@@ -5,9 +5,11 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import threading
 import time
 import wave
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable
@@ -33,34 +35,93 @@ def _worker_parallelism() -> int:
 
 
 _TTS_WORKER_SEMAPHORE = threading.Semaphore(_worker_parallelism())
+_TTS_EXECUTOR = ThreadPoolExecutor(max_workers=_worker_parallelism(), thread_name_prefix="eutherbooks-tts")
+
+
+def _queue_capacity() -> int:
+    try:
+        return max(_worker_parallelism(), int(os.environ.get("EUTHERBOOKS_TTS_QUEUE_CAPACITY", "16")))
+    except ValueError:
+        return 16
+
+
+_TTS_QUEUE_SLOTS = threading.BoundedSemaphore(_queue_capacity())
+
+
+class TtsQueueFullError(RuntimeError):
+    pass
 
 
 class JobStore:
     def __init__(self, data_dir: Path):
         self.path = data_dir / "jobs.json"
-        self._lock = threading.Lock()
+        self.db_path = data_dir / "jobs.sqlite3"
+        self._lock = threading.RLock()
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._initialize()
 
     def list_jobs(self) -> list[TtsJob]:
         with self._lock:
-            return list(self._read().values())
+            self._import_legacy_if_needed()
+            with self._connect() as connection:
+                rows = connection.execute("SELECT payload FROM jobs ORDER BY updated_at ASC").fetchall()
+            return [_job_from_dict(json.loads(row[0])) for row in rows]
+
+    def query_jobs(
+        self,
+        *,
+        owner: str | None = None,
+        book_id: str | None = None,
+        status: str | None = None,
+        limit: int = 200,
+    ) -> list[TtsJob]:
+        with self._lock:
+            self._import_legacy_if_needed()
+            clauses: list[str] = []
+            values: list[object] = []
+            for column, value in (("owner", owner), ("book_id", book_id), ("status", status)):
+                if value:
+                    clauses.append(f"{column} = ?")
+                    values.append(value)
+            where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+            values.append(max(1, min(int(limit), 2000)))
+            with self._connect() as connection:
+                rows = connection.execute(
+                    f"SELECT payload FROM jobs{where} ORDER BY updated_at DESC LIMIT ?",
+                    values,
+                ).fetchall()
+            return [_job_from_dict(json.loads(row[0])) for row in reversed(rows)]
 
     def get(self, job_id: str) -> TtsJob | None:
         with self._lock:
-            return self._read().get(job_id)
+            self._import_legacy_if_needed()
+            with self._connect() as connection:
+                row = connection.execute("SELECT payload FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            return _job_from_dict(json.loads(row[0])) if row else None
 
     def put(self, job: TtsJob) -> None:
         with self._lock:
-            jobs = self._read()
-            jobs[job.id] = job
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            payload = {job_id: asdict(value) for job_id, value in jobs.items()}
-            self.path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+            self._import_legacy_if_needed()
+            payload = json.dumps(asdict(job), ensure_ascii=False, separators=(",", ":"))
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO jobs (id, book_id, owner, status, updated_at, payload)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        book_id = excluded.book_id,
+                        owner = excluded.owner,
+                        status = excluded.status,
+                        updated_at = excluded.updated_at,
+                        payload = excluded.payload
+                    """,
+                    (job.id, job.book_id, job.owner, job.status.value, time.time(), payload),
+                )
 
     def cancel_active(self, reason: str, owner: str | None = None, except_job_id: str | None = None) -> int:
         clean_owner = owner.strip() if owner else ""
         with self._lock:
-            jobs = self._read()
-            changed = False
+            jobs = {job.id: job for job in self.list_jobs()}
             cancelled = 0
             for job in jobs.values():
                 if job.id == except_job_id:
@@ -73,12 +134,12 @@ class JobStore:
                     job.progress_label = "Cancelled"
                     job.progress_detail = reason
                     job.worker_progress = 0.0
-                    changed = True
                     cancelled += 1
-            if changed:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                payload = {job_id: asdict(value) for job_id, value in jobs.items()}
-                self.path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+            if cancelled:
+                with self._connect() as connection:
+                    for job in jobs.values():
+                        if job.status is JobStatus.FAILED and job.error == reason:
+                            self._put_with_connection(connection, job)
             return cancelled
 
     def cancel_incomplete_for_owner(self, owner: str, reason: str, except_job_id: str | None = None) -> int:
@@ -89,8 +150,8 @@ class JobStore:
 
     def reset_incomplete(self, reason: str = "Interrupted by service restart.") -> None:
         with self._lock:
-            jobs = self._read()
-            changed = False
+            jobs = {job.id: job for job in self.list_jobs()}
+            changed: list[TtsJob] = []
             for job in jobs.values():
                 if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
                     job.status = JobStatus.FAILED
@@ -98,41 +159,103 @@ class JobStore:
                     job.progress_label = "Interrupted"
                     job.progress_detail = reason
                     job.worker_progress = 0.0
-                    changed = True
+                    changed.append(job)
             if changed:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                payload = {job_id: asdict(value) for job_id, value in jobs.items()}
-                self.path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+                with self._connect() as connection:
+                    for job in changed:
+                        self._put_with_connection(connection, job)
 
-    def _read(self) -> dict[str, TtsJob]:
-        if not self.path.exists():
-            return {}
-        raw = json.loads(self.path.read_text(encoding="utf-8"))
-        return {
-            job_id: TtsJob(
-                id=value["id"],
-                book_id=value["book_id"],
-                status=JobStatus(value["status"]),
-                language=value["language"],
-                voice=value["voice"],
-                chapter_indexes=list(value["chapter_indexes"]),
-                owner=str(value.get("owner") or ""),
-                audio_files=list(value.get("audio_files", [])),
-                audio_durations=_stored_audio_durations(value),
-                total_audio_files=int(value.get("total_audio_files", 0)),
-                tts_options=dict(value.get("tts_options", {})),
-                queue_remainder=bool(value.get("queue_remainder", False)),
-                progress_label=_stored_progress_label(value),
-                progress_detail=str(value.get("progress_detail") or _stored_progress_detail(value)),
-                current_chapter_index=value.get("current_chapter_index"),
-                current_chunk_index=int(value.get("current_chunk_index", 0)),
-                worker_progress=_stored_worker_progress(value),
-                total_chunks=int(value.get("total_chunks", 0)),
-                perf=dict(value.get("perf", {})) if isinstance(value.get("perf"), dict) else {},
-                error=value.get("error"),
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.db_path, timeout=30)
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA synchronous=NORMAL")
+        return connection
+
+    def _initialize(self) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS jobs (
+                    id TEXT PRIMARY KEY,
+                    book_id TEXT NOT NULL,
+                    owner TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    updated_at REAL NOT NULL,
+                    payload TEXT NOT NULL
+                )
+                """
             )
-            for job_id, value in raw.items()
-        }
+            connection.execute("CREATE INDEX IF NOT EXISTS jobs_owner_updated ON jobs(owner, updated_at DESC)")
+            connection.execute("CREATE INDEX IF NOT EXISTS jobs_book_updated ON jobs(book_id, updated_at DESC)")
+            connection.execute("CREATE INDEX IF NOT EXISTS jobs_status_updated ON jobs(status, updated_at DESC)")
+            connection.execute("CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        self._import_legacy_if_needed()
+
+    def _import_legacy_if_needed(self) -> None:
+        with self._connect() as connection:
+            imported = connection.execute(
+                "SELECT 1 FROM metadata WHERE key = 'legacy_jobs_imported'"
+            ).fetchone()
+            if imported:
+                return
+            if not self.path.exists():
+                return
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+            updated_at = self.path.stat().st_mtime
+            for value in raw.values():
+                job = _job_from_dict(value)
+                self._put_with_connection(connection, job, updated_at=updated_at)
+            connection.execute(
+                "INSERT INTO metadata (key, value) VALUES ('legacy_jobs_imported', ?)",
+                (str(time.time()),),
+            )
+
+    def _put_with_connection(
+        self,
+        connection: sqlite3.Connection,
+        job: TtsJob,
+        *,
+        updated_at: float | None = None,
+    ) -> None:
+        payload = json.dumps(asdict(job), ensure_ascii=False, separators=(",", ":"))
+        connection.execute(
+            """
+            INSERT INTO jobs (id, book_id, owner, status, updated_at, payload)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                book_id = excluded.book_id,
+                owner = excluded.owner,
+                status = excluded.status,
+                updated_at = excluded.updated_at,
+                payload = excluded.payload
+            """,
+            (job.id, job.book_id, job.owner, job.status.value, updated_at or time.time(), payload),
+        )
+
+
+def _job_from_dict(value: dict[str, Any]) -> TtsJob:
+    return TtsJob(
+        id=value["id"],
+        book_id=value["book_id"],
+        status=JobStatus(value["status"]),
+        language=value["language"],
+        voice=value["voice"],
+        chapter_indexes=list(value["chapter_indexes"]),
+        owner=str(value.get("owner") or ""),
+        audio_files=list(value.get("audio_files", [])),
+        audio_durations=_stored_audio_durations(value),
+        total_audio_files=int(value.get("total_audio_files", 0)),
+        tts_options=dict(value.get("tts_options", {})),
+        queue_remainder=bool(value.get("queue_remainder", False)),
+        progress_label=_stored_progress_label(value),
+        progress_detail=str(value.get("progress_detail") or _stored_progress_detail(value)),
+        current_chapter_index=value.get("current_chapter_index"),
+        current_chunk_index=int(value.get("current_chunk_index", 0)),
+        worker_progress=_stored_worker_progress(value),
+        total_chunks=int(value.get("total_chunks", 0)),
+        perf=dict(value.get("perf", {})) if isinstance(value.get("perf"), dict) else {},
+        error=value.get("error"),
+    )
 
 
 class TtsQueue:
@@ -184,6 +307,9 @@ class TtsQueue:
         if clean_owner and cancel_existing:
             self.store.cancel_incomplete_for_owner(clean_owner, "Cancelled by a newer request from the same user.")
 
+        if not _TTS_QUEUE_SLOTS.acquire(blocking=False):
+            raise TtsQueueFullError("The speech queue is full. Try again when an active job has finished.")
+
         job = TtsJob(
             id=job_id,
             book_id=book_id,
@@ -199,10 +325,19 @@ class TtsQueue:
             progress_detail="Waiting for a speech worker.",
             total_chunks=total_audio_files,
         )
-        self.store.put(job)
-        thread = threading.Thread(target=self._run_job, args=(job.id,), daemon=True)
-        thread.start()
+        try:
+            self.store.put(job)
+            _TTS_EXECUTOR.submit(self._run_job_with_slot, job.id)
+        except Exception:
+            _TTS_QUEUE_SLOTS.release()
+            raise
         return job
+
+    def _run_job_with_slot(self, job_id: str) -> None:
+        try:
+            self._run_job(job_id)
+        finally:
+            _TTS_QUEUE_SLOTS.release()
 
     def _total_audio_files(self, chapters: list[Chapter], indexes: list[int], options: dict[str, Any] | None = None) -> int:
         chapters_by_index = {chapter.index: chapter for chapter in chapters}
