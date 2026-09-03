@@ -61,6 +61,17 @@ fingerprint match the established EutherBooks Player identity. Signing does
 not publish or overwrite any downloadable APK; publication is a separate,
 deliberate step after device testing.
 
+If a signing password may have been exposed, rotate it without changing the
+app's signing identity:
+
+```bash
+android/scripts/rotate-signing-credential.sh
+```
+
+The rotation runs against a copy, signs a probe APK, verifies the established
+certificate fingerprint, keeps a mode-0600 backup of the previous keystore,
+and only then replaces the active keystore and encrypted credential.
+
 ## Architecture
 
 - `EutherBooksApi.kt`: HTTP API, authentication headers, and route failover.
