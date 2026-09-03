@@ -57,7 +57,8 @@ if [[ "$actual_cert" != "$EXPECTED_CERT_SHA256" ]]; then
   exit 1
 fi
 
-badging="$(aapt dump badging "$OUTPUT_APK" | head -1)"
+badging="$(aapt dump badging "$OUTPUT_APK")"
+badging="${badging%%$'\n'*}"
 if [[ "$badging" != *"name='$EXPECTED_APPLICATION_ID'"* ]]; then
   echo "Refusing release: application ID is not $EXPECTED_APPLICATION_ID" >&2
   exit 1
