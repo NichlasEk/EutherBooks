@@ -42,8 +42,24 @@ android/app/build/outputs/apk/release/app-release-unsigned.apk
 ```
 
 Do not put signing passwords in Gradle files, shell scripts, Git, or this
-directory. Sign through environment variables or an interactive password
-prompt and verify both the certificate fingerprint and APK hash afterward.
+directory. On the EutherBooks server, install or rotate the user- and
+machine-bound encrypted credential through a hidden prompt:
+
+```bash
+android/scripts/install-signing-credential.sh
+```
+
+Then sign and verify an already-built release:
+
+```bash
+android/scripts/sign-release.sh
+```
+
+The signing script decrypts the password only in process memory. It refuses
+the result unless the package ID, version code, and signing-certificate
+fingerprint match the established EutherBooks Player identity. Signing does
+not publish or overwrite any downloadable APK; publication is a separate,
+deliberate step after device testing.
 
 ## Architecture
 
