@@ -1,0 +1,32 @@
+[Unit]
+Description=Create a portable encrypted EutherBooks signing recovery backup
+After=local-fs.target
+ConditionPathExists=/home/nichlas/.eutherlist/eutherlist-sideload.jks
+ConditionPathExists=/home/nichlas/.config/credentials/eutherbooks-player-keystore-pass.cred
+ConditionPathExists=/etc/eutheroxide-backup/recipients
+
+[Service]
+Type=oneshot
+ExecStart=/home/nichlas/EutherBooks/android/scripts/backup-signing-recovery.sh
+User=root
+Group=eutherbackup
+UMask=0027
+PrivateDevices=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadOnlyPaths=/home/nichlas/EutherBooks /home/nichlas/.eutherlist /home/nichlas/.config/credentials /etc/eutheroxide-backup/recipients
+ReadWritePaths=/srv/backups/eutheroxide /run
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
+LockPersonality=true
+MemoryDenyWriteExecute=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true

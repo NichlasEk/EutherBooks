@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh the portable EutherBooks signing recovery backup daily
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=45m
+Persistent=true
+Unit=eutherbooks-signing-recovery-backup.service
+
+[Install]
+WantedBy=timers.target

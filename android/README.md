@@ -72,6 +72,33 @@ The rotation runs against a copy, signs a probe APK, verifies the established
 certificate fingerprint, keeps a mode-0600 backup of the previous keystore,
 and only then replaces the active keystore and encrypted credential.
 
+### Disaster recovery
+
+The normal credential is deliberately tied to the server and cannot by itself
+survive total server loss. The server therefore also runs
+`eutherbooks-signing-recovery-backup.timer`. It creates a portable bundle with
+the keystore and its current password, but stages the plaintext only under the
+RAM-backed `/run` filesystem and encrypts the bundle immediately to the
+EutherVault age recovery key. The result uses the existing
+`eutherhost-state-*.tar.gz.age` naming convention, so the pull-only mirror on
+`192.168.32.88` copies and checksum-verifies it automatically.
+
+Install or refresh the server unit after changing the scripts:
+
+```bash
+sudo install -m 0644 android/deploy/eutherbooks-signing-recovery-backup.service /etc/systemd/system/
+sudo install -m 0644 android/deploy/eutherbooks-signing-recovery-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now eutherbooks-signing-recovery-backup.timer
+sudo systemctl start eutherbooks-signing-recovery-backup.service
+```
+
+The outer archive must only be decrypted on a trusted recovery machine holding
+the private age/SSH identity. Its `RECOVERY.txt` records the immutable package,
+alias, certificate fingerprint, and keystore hash. `SHA256SUMS` validates every
+file after decryption. The plaintext `keystore-password.txt` must never be
+copied out of that protected recovery session.
+
 ## Architecture
 
 - `EutherBooksApi.kt`: HTTP API, authentication headers, and route failover.
