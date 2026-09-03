@@ -7,6 +7,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
@@ -30,6 +31,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.io.IOException
 
+@UnstableApi
 class PlaybackService : MediaSessionService() {
     private lateinit var player: ExoPlayer
     private var mediaSession: MediaSession? = null
@@ -141,12 +143,14 @@ internal fun QueueEntry.toMediaItem(): MediaItem = MediaItem.Builder()
     )
     .build()
 
+@UnstableApi
 private class FailoverHttpDataSourceFactory(context: Context) : DataSource.Factory {
     private val appContext = context.applicationContext
 
     override fun createDataSource(): DataSource = FailoverHttpDataSource(appContext)
 }
 
+@UnstableApi
 private class FailoverHttpDataSource(context: Context) : DataSource {
     private val appContext = context.applicationContext
     private val listeners = mutableListOf<TransferListener>()
@@ -188,7 +192,7 @@ private class FailoverHttpDataSource(context: Context) : DataSource {
     private fun createHttpSource(): DataSource {
         val token = AppPreferences(appContext).authToken
         return DefaultHttpDataSource.Factory()
-            .setUserAgent("EutherBooksPlayer/0.2.0")
+            .setUserAgent("EutherBooksPlayer/0.2.0-alpha.2")
             .setAllowCrossProtocolRedirects(true)
             .apply {
                 if (token.isNotBlank()) {

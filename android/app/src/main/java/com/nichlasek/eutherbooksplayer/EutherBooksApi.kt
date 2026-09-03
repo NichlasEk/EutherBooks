@@ -1,6 +1,7 @@
 package com.nichlasek.eutherbooksplayer
 
 import android.content.Context
+import android.util.Base64
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
@@ -130,6 +131,60 @@ class EutherBooksApi(context: Context) {
         )
     }
 
+    suspend fun saveVoiceSample(
+        voiceId: String,
+        language: String,
+        promptText: String,
+        bytes: ByteArray,
+        contentType: String,
+        fileName: String,
+    ) {
+        val payload = gson.toJson(
+            mapOf(
+                "voiceId" to voiceId,
+                "language" to language,
+                "promptText" to promptText,
+                "contentType" to contentType,
+                "fileName" to fileName,
+                "dataBase64" to Base64.encodeToString(bytes, Base64.NO_WRAP),
+            ),
+        )
+        hostRequest<Map<String, Any?>>(
+            path = "/api/user/eutherbooks/voice-sample",
+            method = "POST",
+            body = payload,
+        )
+    }
+
+    suspend fun voiceSample(voiceId: String): ByteArray = withContext(Dispatchers.IO) {
+        val token = preferences.authToken
+        var lastError: Throwable? = null
+        for (base in hostCandidates(preferences.routeConfig)) {
+            try {
+                val request = Request.Builder()
+                    .url("$base/api/user/eutherbooks/voice-sample.wav?voice=${segment(voiceId)}")
+                    .header("X-Euther-App-Token", token)
+                    .get()
+                    .build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) throw IOException("${response.code} ${response.message}")
+                    return@withContext response.body?.bytes() ?: throw IOException("Voice sample was empty")
+                }
+            } catch (error: Throwable) {
+                lastError = error
+            }
+        }
+        throw IOException(lastError?.message ?: "Could not download voice sample", lastError)
+    }
+
+    suspend fun reportPlayerLog(event: String, fields: Map<String, Any?> = emptyMap()) {
+        hostRequest<Map<String, Any?>>(
+            path = "/api/eutherbooks-player/log",
+            method = "POST",
+            body = gson.toJson(mapOf("client" to "kotlin", "event" to event) + fields),
+        )
+    }
+
     fun audioUrl(path: String): String = "$activeBaseUrl/audio/${path.split('/').joinToString("/") { segment(it) }}"
 
     private suspend inline fun <reified T> request(path: String, method: String = "GET", body: String? = null): T =
@@ -152,6 +207,25 @@ class EutherBooksApi(context: Context) {
                 }
             }
             throw IOException(lastError?.message ?: "No EutherBooks server responded", lastError)
+        }
+
+    private suspend inline fun <reified T> hostRequest(path: String, method: String, body: String? = null): T =
+        withContext(Dispatchers.IO) {
+            val token = preferences.authToken
+            var lastError: Throwable? = null
+            for (base in hostCandidates(preferences.routeConfig)) {
+                try {
+                    val builder = Request.Builder()
+                        .url("$base$path")
+                        .header("Accept", "application/json")
+                        .header("X-Euther-App-Token", token)
+                    if (method == "POST") builder.post((body ?: "{}").toRequestBody(JSON)) else builder.get()
+                    return@withContext executeJson<T>(builder.build())
+                } catch (error: Throwable) {
+                    lastError = error
+                }
+            }
+            throw IOException(lastError?.message ?: "No EutherHost server responded", lastError)
         }
 
     private inline fun <reified T> executeJson(request: Request): T {

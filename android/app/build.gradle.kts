@@ -12,8 +12,8 @@ android {
         applicationId = "com.nichlasek.eutherbooksplayer"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1078
-        versionName = "0.2.0-alpha.1"
+        versionCode = 1079
+        versionName = "0.2.0-alpha.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

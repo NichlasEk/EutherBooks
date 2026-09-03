@@ -10,7 +10,9 @@ import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import androidx.media3.common.util.UnstableApi
 
+@UnstableApi
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
     private var controller: MediaController? = null
@@ -18,6 +20,16 @@ class MainActivity : ComponentActivity() {
     private val notificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { }
+
+    private val microphonePermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) viewModel.startVoiceRecording() else viewModel.microphonePermissionDenied()
+    }
+
+    private val voiceSamplePicker = registerForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri -> viewModel.importVoiceSample(uri) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,7 +46,21 @@ class MainActivity : ComponentActivity() {
             }
         }, ContextCompat.getMainExecutor(this))
 
-        setContent { EutherBooksApp(viewModel) }
+        setContent {
+            EutherBooksApp(
+                viewModel = viewModel,
+                requestVoiceRecording = {
+                    if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+                        android.content.pm.PackageManager.PERMISSION_GRANTED
+                    ) {
+                        viewModel.startVoiceRecording()
+                    } else {
+                        microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                },
+                pickVoiceSample = { voiceSamplePicker.launch("audio/*") },
+            )
+        }
     }
 
     override fun onDestroy() {

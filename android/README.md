@@ -19,9 +19,14 @@ runtime with one Media3 playback state machine.
 - 15, 30, and 60 minute sleep timers.
 
 The application ID remains `com.nichlasek.eutherbooksplayer`. Version
-`0.2.0-alpha.1` uses version code `1078`, directly after the last Tauri release
-(`0.1.77`, code `1077`). A release APK must be signed with the existing
+`0.2.0-alpha.2` uses version code `1079`, directly after the first native alpha
+(`0.2.0-alpha.1`, code `1078`). A release APK must be signed with the existing
 EutherBooks/EutherList sideload certificate to upgrade the installed app.
+
+Alpha 2 restores the own-voice workflow (record, import, preview, upload, and
+server replay), replaces long voice/model chip rows with dropdowns, reports
+whole-chapter generation progress, and starts playback as soon as the first
+generated audio part is available while later parts continue to arrive.
 
 ## Build
 

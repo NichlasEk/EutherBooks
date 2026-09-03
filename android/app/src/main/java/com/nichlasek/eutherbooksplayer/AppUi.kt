@@ -24,17 +24,25 @@ import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.filled.Book as BookIcon
 import androidx.compose.material.icons.filled.Forward10
+import androidx.compose.material.icons.filled.Hearing
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -78,12 +86,16 @@ private val EutherDark = androidx.compose.material3.darkColorScheme(
 )
 
 @Composable
-fun EutherBooksApp(viewModel: MainViewModel) {
+fun EutherBooksApp(
+    viewModel: MainViewModel,
+    requestVoiceRecording: () -> Unit,
+    pickVoiceSample: () -> Unit,
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     MaterialTheme(colorScheme = EutherDark) {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             if (!state.authenticated) LoginScreen(state, viewModel::login)
-            else MainScreen(state, viewModel)
+            else MainScreen(state, viewModel, requestVoiceRecording, pickVoiceSample)
         }
     }
 }
@@ -141,7 +153,12 @@ private fun LoginScreen(state: AppUiState, onLogin: (String, String) -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MainScreen(state: AppUiState, viewModel: MainViewModel) {
+private fun MainScreen(
+    state: AppUiState,
+    viewModel: MainViewModel,
+    requestVoiceRecording: () -> Unit,
+    pickVoiceSample: () -> Unit,
+) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -174,7 +191,7 @@ private fun MainScreen(state: AppUiState, viewModel: MainViewModel) {
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            SettingsStrip(state, viewModel)
+            SettingsStrip(state, viewModel, requestVoiceRecording, pickVoiceSample)
             if (state.busy && state.activeJob == null) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (state.error.isNotBlank()) ErrorText(state.error)
             if (state.message.isNotBlank()) {
@@ -192,27 +209,159 @@ private fun MainScreen(state: AppUiState, viewModel: MainViewModel) {
 }
 
 @Composable
-private fun SettingsStrip(state: AppUiState, viewModel: MainViewModel) {
-    Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(vertical = 8.dp)) {
-        Text("Model", modifier = Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelMedium)
-        LazyRow(
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
-        ) {
-            items(modelChoices) { (id, label) ->
-                FilterChip(selected = state.modelBackend == id, onClick = { viewModel.setModel(id) }, label = { Text(label) })
+private fun SettingsStrip(
+    state: AppUiState,
+    viewModel: MainViewModel,
+    requestVoiceRecording: () -> Unit,
+    pickVoiceSample: () -> Unit,
+) {
+    var ownVoiceExpanded by remember(state.voiceId) { mutableStateOf(false) }
+    val voices = state.voices
+        .filter { it.modelBackend.isNullOrBlank() || it.modelBackend == state.modelBackend }
+        .sortedWith(compareBy<Voice>({ !it.id.contains("own") }, { it.language }, { it.label.lowercase() }))
+    Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 3.dp) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Text("Berättarröst", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Välj modell och röst innan du öppnar ett kapitel.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f),
+            )
+            Spacer(Modifier.height(9.dp))
+            SelectionDropdown(
+                label = "Röstmodell",
+                selected = modelChoices.firstOrNull { it.first == state.modelBackend }?.second ?: state.modelBackend,
+                options = modelChoices,
+                onSelected = viewModel::setModel,
+            )
+            Spacer(Modifier.height(8.dp))
+            if (voices.isNotEmpty()) {
+                SelectionDropdown(
+                    label = "Röst",
+                    selected = voices.firstOrNull { it.id == state.voiceId }?.label ?: state.voiceId,
+                    options = voices.map { it.id to "${it.label} · ${it.language.uppercase()}" },
+                    onSelected = viewModel::setVoice,
+                )
+            }
+            if (state.voiceId.contains("own")) {
+                TextButton(
+                    onClick = { ownVoiceExpanded = !ownVoiceExpanded },
+                    modifier = Modifier.align(Alignment.End),
+                ) { Text(if (ownVoiceExpanded) "Dölj egen röst" else "Spela in eller byt egen röst") }
+                if (ownVoiceExpanded) {
+                    OwnVoicePanel(state, viewModel, requestVoiceRecording, pickVoiceSample)
+                }
             }
         }
-        val voices = state.voices.filter { it.modelBackend.isNullOrBlank() || it.modelBackend == state.modelBackend }
-        if (voices.isNotEmpty()) {
-            Text("Voice", modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp), style = MaterialTheme.typography.labelMedium)
-            LazyRow(
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SelectionDropdown(
+    label: String,
+    selected: String,
+    options: List<Pair<String, String>>,
+    onSelected: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
+        OutlinedTextField(
+            value = selected,
+            onValueChange = {},
+            modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+            readOnly = true,
+            singleLine = true,
+            label = { Text(label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { (id, optionLabel) ->
+                DropdownMenuItem(
+                    text = { Text(optionLabel) },
+                    onClick = {
+                        expanded = false
+                        onSelected(id)
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun OwnVoicePanel(
+    state: AppUiState,
+    viewModel: MainViewModel,
+    requestVoiceRecording: () -> Unit,
+    pickVoiceSample: () -> Unit,
+) {
+    val language = state.voices.firstOrNull { it.id == state.voiceId }?.language ?: "sv"
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = .09f)),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text("Din egen röst", fontWeight = FontWeight.SemiBold)
+            Text(
+                ownVoicePrompt(language),
+                modifier = Modifier.padding(top = 5.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .72f),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 9.dp),
                 horizontalArrangement = Arrangement.spacedBy(7.dp),
             ) {
-                items(voices, key = { it.id }) { voice ->
-                    FilterChip(selected = state.voiceId == voice.id, onClick = { viewModel.setVoice(voice.id) }, label = { Text(voice.label) })
+                if (state.voiceSampleRecording) {
+                    Button(onClick = viewModel::stopVoiceRecording, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.Stop, null)
+                        Spacer(Modifier.width(5.dp))
+                        Text("Stoppa")
+                    }
+                } else {
+                    Button(onClick = requestVoiceRecording, enabled = !state.voiceSampleUploading, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.Mic, null)
+                        Spacer(Modifier.width(5.dp))
+                        Text(if (state.voiceSampleReady) "Spela om" else "Spela in")
+                    }
                 }
+                OutlinedButton(
+                    onClick = if (state.voiceSamplePlaying) viewModel::stopVoicePreview else viewModel::playVoicePreview,
+                    enabled = state.voiceSampleReady,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(if (state.voiceSamplePlaying) Icons.Default.Stop else Icons.Default.Hearing, null)
+                    Spacer(Modifier.width(5.dp))
+                    Text(if (state.voiceSamplePlaying) "Stoppa" else "Lyssna")
+                }
+            }
+            OutlinedButton(
+                onClick = pickVoiceSample,
+                enabled = !state.voiceSampleRecording && !state.voiceSampleUploading,
+                modifier = Modifier.fillMaxWidth().padding(top = 7.dp),
+            ) { Text("Välj befintlig ljudfil") }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 7.dp),
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                OutlinedButton(
+                    onClick = viewModel::saveVoiceSample,
+                    enabled = state.voiceSampleReady && !state.voiceSampleUploading,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(Icons.Default.Save, null)
+                    Spacer(Modifier.width(5.dp))
+                    Text("Spara")
+                }
+                OutlinedButton(
+                    onClick = viewModel::replaySavedVoiceSample,
+                    enabled = !state.voiceSampleUploading && !state.voiceSampleRecording,
+                    modifier = Modifier.weight(1f),
+                ) { Text("Sparad röst") }
+            }
+            if (state.voiceSampleStatus.isNotBlank()) {
+                Text(state.voiceSampleStatus, modifier = Modifier.padding(top = 7.dp), style = MaterialTheme.typography.labelSmall)
             }
         }
     }
@@ -284,9 +433,25 @@ private fun PlayerPanel(state: AppUiState, viewModel: MainViewModel) {
             if (job != null && job.status != "done") {
                 LinearProgressIndicator(
                     modifier = Modifier.fillMaxWidth(),
-                    progress = { job.workerProgress.coerceIn(0.0, 1.0).toFloat() },
+                    progress = { state.jobOverallProgress },
                 )
-                Text(job.progressDetail, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
+                val total = job.totalChunks.takeIf { it > 0 } ?: job.totalAudioFiles
+                val complete = completedJobParts(job).coerceAtMost(total.coerceAtLeast(1))
+                Text(
+                    if (total > 0) "Del ${minOf(total, complete + 1)} av $total · ${formatDuration(state.jobElapsedSeconds)}" else job.progressLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(top = 5.dp),
+                )
+                Text(
+                    when {
+                        state.jobIdleSeconds >= 60 -> "Servern arbetar fortfarande · ingen ny del på ${formatDuration(state.jobIdleSeconds)}"
+                        job.audioFiles.isNotEmpty() -> "${job.audioFiles.size} delar färdiga · spelar medan resten skapas"
+                        else -> job.progressDetail.ifBlank { "Väntar på första ljuddelen…" }
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier.padding(top = 2.dp, bottom = 6.dp),
+                )
             }
             Text(
                 state.player.title.ifBlank { state.selectedBook?.title.orEmpty() },
@@ -324,13 +489,13 @@ private fun PlayerPanel(state: AppUiState, viewModel: MainViewModel) {
                     onClick = viewModel::generateOrPlay,
                     enabled = state.selectedChapter != null && !state.busy,
                     modifier = Modifier.weight(1f),
-                ) { Text(if (state.busy) "Generating…" else "Generate & play") }
-                OutlinedButton(onClick = viewModel::saveBookmark, enabled = state.player.itemCount > 0) { Text("Bookmark") }
-                OutlinedButton(onClick = viewModel::resumeBookmark, enabled = state.selectedChapter != null) { Text("Resume") }
+                ) { Text(if (state.busy) "Skapar…" else "Skapa och spela") }
+                OutlinedButton(onClick = viewModel::saveBookmark, enabled = state.player.itemCount > 0) { Text("Bokmärke") }
+                OutlinedButton(onClick = viewModel::resumeBookmark, enabled = state.selectedChapter != null) { Text("Fortsätt") }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
-                FilterChip(selected = state.autoNext, onClick = { viewModel.setAutoNext(!state.autoNext) }, label = { Text("Auto-next") })
-                listOf(null to "Off", 15 to "15m", 30 to "30m", 60 to "60m").forEach { (minutes, label) ->
+                FilterChip(selected = state.autoNext, onClick = { viewModel.setAutoNext(!state.autoNext) }, label = { Text("Auto nästa") })
+                listOf(null to "Av", 15 to "15m", 30 to "30m", 60 to "60m").forEach { (minutes, label) ->
                     FilterChip(
                         selected = state.sleepMinutes == minutes,
                         onClick = { viewModel.setSleepTimer(minutes) },
@@ -356,4 +521,10 @@ private fun ErrorText(message: String) {
 private fun formatTime(milliseconds: Long): String {
     val total = (milliseconds / 1000.0).roundToInt().coerceAtLeast(0)
     return "%d:%02d".format(total / 60, total % 60)
+}
+
+private fun formatDuration(seconds: Long): String {
+    val minutes = seconds / 60
+    val remainder = seconds % 60
+    return if (minutes > 0) "${minutes}m ${remainder}s" else "${remainder}s"
 }

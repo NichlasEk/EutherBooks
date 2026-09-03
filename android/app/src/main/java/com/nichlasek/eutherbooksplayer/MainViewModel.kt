@@ -1,6 +1,11 @@
 package com.nichlasek.eutherbooksplayer
 
 import android.app.Application
+import android.media.MediaPlayer
+import android.media.MediaRecorder
+import android.net.Uri
+import android.os.Build
+import android.webkit.MimeTypeMap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
@@ -15,6 +20,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.io.File
 
 data class PlayerUiState(
     val ready: Boolean = false,
@@ -43,6 +49,14 @@ data class AppUiState(
     val modelBackend: String = "dots.tts-mf",
     val autoNext: Boolean = true,
     val activeJob: Job? = null,
+    val jobOverallProgress: Float = 0f,
+    val jobElapsedSeconds: Long = 0,
+    val jobIdleSeconds: Long = 0,
+    val voiceSampleRecording: Boolean = false,
+    val voiceSampleUploading: Boolean = false,
+    val voiceSampleReady: Boolean = false,
+    val voiceSamplePlaying: Boolean = false,
+    val voiceSampleStatus: String = "",
     val message: String = "",
     val error: String = "",
     val sleepDeadlineMs: Long? = null,
@@ -69,6 +83,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var playerTicker: CoroutineJob? = null
     private var sleepJob: CoroutineJob? = null
     private var generationSerial = 0
+    private var generationStartedAtMs = 0L
+    private var generationLastProgressAtMs = 0L
+    private var generationProgressSignature = ""
+    private var voiceRecorder: MediaRecorder? = null
+    private var voicePreviewPlayer: MediaPlayer? = null
+    private var voiceSampleFile: File? = null
+    private var voiceSampleContentType = "audio/mp4"
+    private var voiceSampleFileName = "voice-sample.m4a"
 
     private val playerListener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) {
@@ -219,6 +241,159 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(voiceId = voiceId) }
     }
 
+    fun startVoiceRecording() {
+        if (voiceRecorder != null || _state.value.voiceSampleUploading) return
+        val output = File(getApplication<Application>().cacheDir, "eutherbooks-voice-sample.m4a")
+        runCatching {
+            stopVoicePreview()
+            if (output.exists()) output.delete()
+            val recorder = if (Build.VERSION.SDK_INT >= 31) {
+                MediaRecorder(getApplication())
+            } else {
+                @Suppress("DEPRECATION")
+                MediaRecorder()
+            }
+            recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
+            recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            recorder.setAudioEncodingBitRate(128_000)
+            recorder.setAudioSamplingRate(44_100)
+            recorder.setOutputFile(output.absolutePath)
+            recorder.prepare()
+            recorder.start()
+            voiceRecorder = recorder
+            voiceSampleFile = output
+            voiceSampleContentType = "audio/mp4"
+            voiceSampleFileName = "voice-sample.m4a"
+            _state.update {
+                it.copy(
+                    voiceSampleRecording = true,
+                    voiceSampleReady = false,
+                    voiceSampleStatus = "Inspelning pågår…",
+                    error = "",
+                )
+            }
+        }.onFailure { error ->
+            releaseVoiceRecorder()
+            _state.update { it.copy(error = "Kunde inte starta mikrofonen: ${readable(error)}") }
+        }
+    }
+
+    fun microphonePermissionDenied() {
+        _state.update { it.copy(error = "Mikrofonbehörighet behövs för att spela in din röst") }
+    }
+
+    fun stopVoiceRecording() {
+        val recorder = voiceRecorder ?: return
+        runCatching { recorder.stop() }
+            .onSuccess {
+                _state.update {
+                    it.copy(
+                        voiceSampleRecording = false,
+                        voiceSampleReady = voiceSampleFile?.length()?.let { bytes -> bytes > 0 } == true,
+                        voiceSampleStatus = "Provlyssna och spara när rösten låter bra.",
+                    )
+                }
+            }
+            .onFailure { error ->
+                voiceSampleFile?.delete()
+                voiceSampleFile = null
+                _state.update { it.copy(voiceSampleRecording = false, error = "Inspelningen blev för kort: ${readable(error)}") }
+            }
+        releaseVoiceRecorder()
+    }
+
+    fun playVoicePreview() {
+        val file = voiceSampleFile
+        if (file == null || !file.isFile) {
+            _state.update { it.copy(error = "Spela in ett röstprov först") }
+            return
+        }
+        playVoiceFile(file)
+    }
+
+    fun importVoiceSample(uri: Uri?) {
+        if (uri == null || _state.value.voiceSampleRecording || _state.value.voiceSampleUploading) return
+        runCatching {
+            stopVoicePreview()
+            val resolver = getApplication<Application>().contentResolver
+            val contentType = resolver.getType(uri) ?: "application/octet-stream"
+            val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(contentType)?.take(8) ?: "audio"
+            val output = File(getApplication<Application>().cacheDir, "eutherbooks-voice-import.$extension")
+            resolver.openInputStream(uri)?.use { input ->
+                output.outputStream().use { outputStream -> input.copyTo(outputStream) }
+            }
+                ?: throw IllegalArgumentException("Kunde inte läsa ljudfilen")
+            require(output.length() in 1..20_000_000) { "Ljudfilen är tom eller för stor" }
+            voiceSampleFile = output
+            voiceSampleContentType = contentType
+            voiceSampleFileName = "voice-sample.$extension"
+            _state.update {
+                it.copy(
+                    voiceSampleReady = true,
+                    voiceSampleStatus = "Ljudfilen är vald. Provlyssna och spara.",
+                    error = "",
+                )
+            }
+        }.onFailure { error ->
+            _state.update { it.copy(error = readable(error)) }
+        }
+    }
+
+    fun saveVoiceSample() {
+        val file = voiceSampleFile
+        if (file == null || !file.isFile || _state.value.voiceSampleUploading) return
+        val selectedVoiceId = _state.value.voiceId
+        val selectedVoice = _state.value.voices.firstOrNull { it.id == selectedVoiceId }
+        val language = if (selectedVoice?.language == "en") "en" else "sv"
+        val prompt = ownVoicePrompt(language)
+        val contentType = voiceSampleContentType
+        val fileName = voiceSampleFileName
+        viewModelScope.launch {
+            _state.update { it.copy(voiceSampleUploading = true, voiceSampleStatus = "Sparar röstprov…", error = "") }
+            runCatching {
+                api.saveVoiceSample(
+                    selectedVoiceId,
+                    language,
+                    prompt,
+                    file.readBytes(),
+                    contentType,
+                    fileName,
+                )
+                }
+                .onSuccess {
+                    report("voice_sample_saved", mapOf("voice" to selectedVoiceId, "language" to language))
+                    _state.update {
+                        it.copy(
+                            voiceSampleUploading = false,
+                            voiceSampleStatus = "Röstprovet är sparat på servern.",
+                            message = "Egen röst uppdaterad",
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _state.update { it.copy(voiceSampleUploading = false, error = readable(error), voiceSampleStatus = "") }
+                }
+        }
+    }
+
+    fun replaySavedVoiceSample() {
+        if (_state.value.voiceSampleUploading) return
+        val voiceId = _state.value.voiceId
+        viewModelScope.launch {
+            _state.update { it.copy(voiceSampleUploading = true, voiceSampleStatus = "Hämtar sparat röstprov…", error = "") }
+            runCatching {
+                val bytes = api.voiceSample(voiceId)
+                File(getApplication<Application>().cacheDir, "eutherbooks-saved-voice.wav").apply { writeBytes(bytes) }
+            }.onSuccess { file ->
+                _state.update { it.copy(voiceSampleUploading = false, voiceSampleStatus = "Spelar sparat röstprov.") }
+                playVoiceFile(file)
+            }.onFailure { error ->
+                _state.update { it.copy(voiceSampleUploading = false, error = readable(error), voiceSampleStatus = "") }
+            }
+        }
+    }
+
     fun setAutoNext(enabled: Boolean) {
         preferences.autoNext = enabled
         _state.update { it.copy(autoNext = enabled) }
@@ -238,34 +413,136 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val serial = ++generationSerial
+        generationStartedAtMs = System.currentTimeMillis()
+        generationLastProgressAtMs = generationStartedAtMs
+        generationProgressSignature = ""
         viewModelScope.launch {
-            _state.update { it.copy(busy = true, error = "", message = "Checking generated audio…") }
+            _state.update {
+                it.copy(
+                    busy = true,
+                    activeJob = null,
+                    jobOverallProgress = 0f,
+                    jobElapsedSeconds = 0,
+                    jobIdleSeconds = 0,
+                    error = "",
+                    message = "Kontrollerar om ljudet redan finns…",
+                )
+            }
             runCatching {
                 val jobs = api.jobs(book.id)
                 val existing = matchingDoneJob(jobs, chapter, voice, snapshot.modelBackend)
                 val job = existing ?: api.createJob(book, chapter, voice, snapshot.modelBackend)
-                val finished = awaitJob(job, serial)
+                report("generation_started", mapOf("job_id" to job.id, "book_id" to book.id, "chapter" to chapter.index, "voice" to voice.id))
+                val finished = awaitJob(job, serial, book, chapter, voice, streamAudio = true)
                 if (serial != generationSerial) return@runCatching
-                playJob(book, chapter, voice, finished, jobs + finished)
+                finalizeStreamedJob(book, chapter, voice, finished, jobs + finished)
                 if (snapshot.autoNext) prepareLookahead(book, chapter, voice, snapshot.modelBackend, serial)
             }.onFailure { error ->
-                if (serial == generationSerial) _state.update { it.copy(busy = false, error = readable(error), message = "") }
+                if (serial == generationSerial) {
+                    report("generation_failed", mapOf("error" to readable(error)))
+                    _state.update { it.copy(busy = false, error = readable(error), message = "") }
+                }
             }
         }
     }
 
-    private suspend fun awaitJob(initial: Job, serial: Int): Job {
+    private suspend fun awaitJob(
+        initial: Job,
+        serial: Int,
+        book: Book? = null,
+        chapter: Chapter? = null,
+        voice: Voice? = null,
+        streamAudio: Boolean = false,
+    ): Job {
         var current = initial
         while (current.status == "queued" || current.status == "running") {
             if (serial != generationSerial) throw IllegalStateException("Selection changed")
-            _state.update { it.copy(activeJob = current, message = current.progressDetail.ifBlank { current.progressLabel }) }
+            updateJobProgress(current)
+            if (streamAudio && book != null && chapter != null && voice != null && current.audioFiles.isNotEmpty()) {
+                syncStreamedAudio(book, chapter, current)
+            }
             delay(2_000)
             current = api.job(current.id)
         }
         if (current.status != "done" || current.audioFiles.isEmpty()) {
             throw IllegalStateException(current.error ?: "No playable audio was generated")
         }
+        updateJobProgress(current)
+        if (streamAudio && book != null && chapter != null && voice != null) syncStreamedAudio(book, chapter, current)
         return current
+    }
+
+    private fun updateJobProgress(job: Job) {
+        val now = System.currentTimeMillis()
+        val signature = "${job.status}:${job.currentChunkIndex}:${job.audioFiles.size}:${job.workerProgress}:${job.progressDetail}"
+        if (signature != generationProgressSignature) {
+            generationProgressSignature = signature
+            generationLastProgressAtMs = now
+        }
+        _state.update {
+            it.copy(
+                activeJob = job,
+                jobOverallProgress = overallJobProgress(job),
+                jobElapsedSeconds = ((now - generationStartedAtMs).coerceAtLeast(0) / 1_000),
+                jobIdleSeconds = ((now - generationLastProgressAtMs).coerceAtLeast(0) / 1_000),
+                message = job.progressDetail.ifBlank { job.progressLabel },
+            )
+        }
+    }
+
+    private fun syncStreamedAudio(book: Book, chapter: Chapter, job: Job) {
+        val player = controller ?: return
+        val wanted = mediaItems(book, chapter, job)
+        if (wanted.isEmpty()) return
+        val currentJobIds = (0 until player.mediaItemCount)
+            .map { player.getMediaItemAt(it).mediaId }
+            .filter { it.startsWith("${job.id}:") }
+            .toSet()
+        if (currentJobIds.isEmpty()) {
+            val bookmark = preferences.bookmark(book.id, chapter.index, _state.value.voiceId, _state.value.modelBackend)
+            val startIndex = bookmark?.mediaIndex?.coerceIn(wanted.indices) ?: 0
+            player.setMediaItems(wanted, startIndex, bookmark?.positionMs?.coerceAtLeast(0) ?: 0)
+            player.prepare()
+            player.play()
+            report("partial_playback_started", mapOf("job_id" to job.id, "ready_parts" to wanted.size))
+        } else {
+            val additions = wanted.filterNot { it.mediaId in currentJobIds }
+            if (additions.isNotEmpty()) {
+                val firstNewIndex = player.mediaItemCount
+                player.addMediaItems(additions)
+                if (player.playbackState == Player.STATE_ENDED) {
+                    player.seekTo(firstNewIndex, 0)
+                    player.prepare()
+                    player.play()
+                }
+            }
+        }
+        refreshPlayerState()
+    }
+
+    private fun finalizeStreamedJob(book: Book, chapter: Chapter, voice: Voice, job: Job, knownJobs: List<Job>) {
+        syncStreamedAudio(book, chapter, job)
+        val sortedChapters = _state.value.chapters.sortedBy { it.index }
+        val startPosition = sortedChapters.indexOfFirst { it.index == chapter.index }.coerceAtLeast(0)
+        val existingIds = (0 until (controller?.mediaItemCount ?: 0))
+            .mapNotNull { controller?.getMediaItemAt(it)?.mediaId }
+            .toSet()
+        val additions = sortedChapters.drop(startPosition + 1).take(7).flatMap { candidateChapter ->
+            matchingDoneJob(knownJobs, candidateChapter, voice, _state.value.modelBackend)
+                ?.let { mediaItems(book, candidateChapter, it) }
+                .orEmpty()
+        }.filterNot { it.mediaId in existingIds }
+        if (additions.isNotEmpty()) controller?.addMediaItems(additions)
+        _state.update {
+            it.copy(
+                activeJob = job,
+                jobOverallProgress = 1f,
+                busy = false,
+                message = "Kapitlet är färdigt och spelar",
+                error = "",
+            )
+        }
+        refreshPlayerState()
     }
 
     private fun playJob(book: Book, chapter: Chapter, voice: Voice, job: Job, knownJobs: List<Job>) {
@@ -432,10 +709,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun playVoiceFile(file: File) {
+        stopVoicePreview()
+        runCatching {
+            MediaPlayer().also { player ->
+                voicePreviewPlayer = player
+                player.setDataSource(file.absolutePath)
+                player.setOnCompletionListener {
+                    stopVoicePreview()
+                    _state.update { state -> state.copy(voiceSampleStatus = "Provlyssningen är klar.") }
+                }
+                player.prepare()
+                player.start()
+                _state.update { it.copy(voiceSamplePlaying = true, voiceSampleStatus = "Spelar röstprov…") }
+            }
+        }.onFailure { error ->
+            stopVoicePreview()
+            _state.update { it.copy(error = "Kunde inte spela röstprovet: ${readable(error)}") }
+        }
+    }
+
+    fun stopVoicePreview() {
+        voicePreviewPlayer?.runCatching { stop() }
+        voicePreviewPlayer?.release()
+        voicePreviewPlayer = null
+        _state.update { it.copy(voiceSamplePlaying = false) }
+    }
+
+    private fun releaseVoiceRecorder() {
+        voiceRecorder?.release()
+        voiceRecorder = null
+    }
+
+    private fun report(event: String, fields: Map<String, Any?> = emptyMap()) {
+        viewModelScope.launch { runCatching { api.reportPlayerLog(event, fields) } }
+    }
+
     override fun onCleared() {
         controller?.removeListener(playerListener)
         playerTicker?.cancel()
         sleepJob?.cancel()
+        if (_state.value.voiceSampleRecording) voiceRecorder?.runCatching { stop() }
+        releaseVoiceRecorder()
+        stopVoicePreview()
         super.onCleared()
     }
 }
@@ -458,3 +774,20 @@ internal fun selectBestVoice(voices: List<Voice>, model: String, preferred: Stri
 
 private fun readable(error: Throwable): String =
     error.message?.replace(Regex("https?://[^ ]+"), "server")?.take(300) ?: "Unknown error"
+
+internal fun ownVoicePrompt(language: String): String = if (language == "en") {
+    "The sun rises slowly over the forest. I read this text in my natural storytelling voice, clearly and calmly, so that every word can be heard."
+} else {
+    "Solen går långsamt upp över skogen. Jag läser den här texten med min naturliga berättarröst, tydligt och lugnt, så att varje ord hörs klart."
+}
+
+internal fun completedJobParts(job: Job): Int =
+    maxOf(job.currentChunkIndex, job.audioFiles.size).coerceAtLeast(0)
+
+internal fun overallJobProgress(job: Job): Float {
+    val total = job.totalChunks.takeIf { it > 0 } ?: job.totalAudioFiles.takeIf { it > 0 } ?: return 0f
+    val completed = completedJobParts(job).coerceAtMost(total)
+    return ((completed + job.workerProgress.coerceIn(0.0, 1.0)) / total.toDouble())
+        .coerceIn(0.0, 1.0)
+        .toFloat()
+}
