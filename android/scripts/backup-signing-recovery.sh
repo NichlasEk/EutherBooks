@@ -79,9 +79,10 @@ inside keystore-password.txt belongs only to the bundled keystore. Never place
 it in Git, Gradle properties, shell history, or an unencrypted backup.
 EOF
 chmod 0600 "$STAGING/payload/RECOVERY.txt"
-sha256sum "$STAGING/payload/eutherbooks-player.jks" \
-  "$STAGING/payload/keystore-password.txt" \
-  "$STAGING/payload/RECOVERY.txt" > "$STAGING/payload/SHA256SUMS"
+(
+  cd "$STAGING/payload"
+  sha256sum eutherbooks-player.jks keystore-password.txt RECOVERY.txt > SHA256SUMS
+)
 
 ENCRYPTED="$STAGING/$ARCHIVE_NAME"
 tar -C "$STAGING/payload" --sort=name --owner=0 --group=0 --numeric-owner -czf - . \
