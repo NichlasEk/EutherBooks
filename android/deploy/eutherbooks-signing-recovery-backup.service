@@ -20,7 +20,8 @@ ReadWritePaths=/srv/backups/eutheroxide /run
 NoNewPrivileges=true
 CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
 LockPersonality=true
-MemoryDenyWriteExecute=true
+# keytool runs on the JVM, which requires executable JIT mappings.
+MemoryDenyWriteExecute=false
 ProtectClock=true
 ProtectControlGroups=true
 ProtectHostname=true
