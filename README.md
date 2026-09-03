@@ -3,6 +3,9 @@
 EutherBooks is a local ebook-to-audiobook service module intended for an EutherOxide server.
 Drop legally sourced ebooks into `library/`, let the service index them, and generate audio with a local TTS backend.
 
+The native Android player lives in [`android/`](android/README.md). It replaces the
+former Tauri/WebView playback shell while continuing to use this API unchanged.
+
 The first version is deliberately small:
 
 - Recursive library scanning for `.epub`, `.pdf`, `.txt`, and `.md`.

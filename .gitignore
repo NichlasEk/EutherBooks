@@ -3,6 +3,10 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .venv/
+.gradle-local/
+android/.gradle/
+android/local.properties
+android/**/build/
 *.egg-info/
 models/*
 tools/*
