@@ -12,8 +12,8 @@ android {
         applicationId = "com.nichlasek.eutherbooksplayer"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1079
-        versionName = "0.2.0-alpha.2"
+        versionCode = 1080
+        versionName = "0.2.0-alpha.3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -54,5 +54,8 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4:1.8.3")
+    debugImplementation("androidx.compose.ui:ui-test-manifest:1.8.3")
     debugImplementation("androidx.compose.ui:ui-tooling:1.8.3")
 }

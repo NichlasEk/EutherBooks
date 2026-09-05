@@ -39,6 +39,42 @@ class AppPreferences(context: Context) {
         get() = prefs.getBoolean(KEY_AUTO_NEXT, true)
         set(value) { prefs.edit().putBoolean(KEY_AUTO_NEXT, value).apply() }
 
+    var playbackSpeed: Float
+        get() = prefs.getFloat("playback_speed", 1f).coerceIn(0.5f, 2f)
+        set(value) { prefs.edit().putFloat("playback_speed", value.coerceIn(0.5f, 2f)).apply() }
+
+    private fun userKey(key: String) = "user:${username.lowercase(java.util.Locale.ROOT)}:$key"
+
+    private fun ownsLegacyBookmarks(): Boolean {
+        val owner = prefs.getString("legacy_bookmark_owner", null)
+        if (owner == null) prefs.edit().putString("legacy_bookmark_owner", username).apply()
+        return owner == null || owner == username
+    }
+
+    fun bookVoice(bookId: String): BookVoice? = runCatching {
+        prefs.getString(userKey("voice:$bookId"), null)?.let { gson.fromJson(it, BookVoice::class.java) }
+    }.getOrNull()
+
+    fun saveBookVoice(bookId: String, voice: BookVoice) {
+        prefs.edit().putString(userKey("voice:$bookId"), gson.toJson(voice)).apply()
+    }
+
+    fun recentBookmarks(): Map<String, Bookmark> {
+        val prefix = userKey("recent:")
+        val includeLegacy = ownsLegacyBookmarks()
+        return prefs.all.filterKeys { it.startsWith(prefix) || (includeLegacy && it.startsWith("bookmark:")) }.values.mapNotNull { value ->
+            runCatching { gson.fromJson(value as String, Bookmark::class.java) }.getOrNull()
+        }.groupBy { it.bookId }.mapValues { (_, entries) -> entries.maxBy { it.updatedAtMs } }
+    }
+
+    fun finishedBooks(): Set<String> = prefs.getStringSet(userKey("finished"), emptySet()).orEmpty().toSet()
+
+    fun setFinished(bookId: String, finished: Boolean) {
+        val books = finishedBooks().toMutableSet()
+        if (finished) books.add(bookId) else books.remove(bookId)
+        prefs.edit().putStringSet(userKey("finished"), books).apply()
+    }
+
     var savedQueue: SavedQueue?
         get() = runCatching {
             prefs.getString(KEY_QUEUE, null)?.let { gson.fromJson(it, SavedQueue::class.java) }
@@ -50,12 +86,16 @@ class AppPreferences(context: Context) {
         }
 
     fun saveBookmark(bookmark: Bookmark) {
-        prefs.edit().putString(bookmarkKey(bookmark.bookId, bookmark.chapterIndex, bookmark.voiceId, bookmark.modelBackend), gson.toJson(bookmark)).apply()
+        prefs.edit()
+            .putString(userKey(bookmarkKey(bookmark.bookId, bookmark.chapterIndex, bookmark.voiceId, bookmark.modelBackend)), gson.toJson(bookmark))
+            .putString(userKey("recent:${bookmark.bookId}"), gson.toJson(bookmark))
+            .apply()
     }
 
     fun bookmark(bookId: String, chapterIndex: Int, voiceId: String, modelBackend: String): Bookmark? =
         runCatching {
-            prefs.getString(bookmarkKey(bookId, chapterIndex, voiceId, modelBackend), null)
+            val key = bookmarkKey(bookId, chapterIndex, voiceId, modelBackend)
+            (prefs.getString(userKey(key), null) ?: if (ownsLegacyBookmarks()) prefs.getString(key, null) else null)
                 ?.let { gson.fromJson(it, Bookmark::class.java) }
         }.getOrNull()
 

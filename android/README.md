@@ -19,14 +19,26 @@ runtime with one Media3 playback state machine.
 - 15, 30, and 60 minute sleep timers.
 
 The application ID remains `com.nichlasek.eutherbooksplayer`. Version
-`0.2.0-alpha.2` uses version code `1079`, directly after the first native alpha
-(`0.2.0-alpha.1`, code `1078`). A release APK must be signed with the existing
+`0.2.0-alpha.3` uses version code `1080`, following alpha 2 (`1079`). A release APK must be signed with the existing
 EutherBooks/EutherList sideload certificate to upgrade the installed app.
 
-Alpha 2 restores the own-voice workflow (record, import, preview, upload, and
-server replay), replaces long voice/model chip rows with dropdowns, reports
-whole-chapter generation progress, and starts playback as soon as the first
-generated audio part is available while later parts continue to arrive.
+Alpha 3 adds a listening-first library with a continue card, title/author search,
+unread/in-progress/finished filters, typographic book covers, and voice settings
+remembered per book. A compact player opens into chapter seeking and 0.5–2×
+playback speed. The chapter timeline aggregates known audio-part durations; while
+new audio is being generated it explicitly represents only the available audio.
+
+Playback metadata, including book/chapter/voice/model and the chapter-relative
+part index, survives queue restoration. Both the playback service and UI save the
+actual playing item, independently of the book currently being browsed. Previous
+bookmarks remain available after upgrading. Ready chapters are queued in order;
+a missing chapter is generated before subsequent chapters are added.
+
+Alpha 2's own-voice workflow remains available from the book settings (record,
+import, preview, upload, and server replay). Automatic streaming, background
+playback and the existing cache remain in place. Explicit offline downloads and
+cross-device progress sync are not part of this release.
+
 
 ## Build
 
@@ -36,7 +48,7 @@ export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
 export ANDROID_HOME=/opt/android-sdk
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 export GRADLE_USER_HOME="$PWD/../.gradle-local"
-./gradlew testDebugUnitTest assembleDebug
+./gradlew testDebugUnitTest assembleDebug lintDebug
 ./gradlew assembleRelease
 ```
 
@@ -103,6 +115,15 @@ the private age/SSH identity. Its `RECOVERY.txt` records the immutable package,
 alias, certificate fingerprint, and keystore hash. `SHA256SUMS` validates every
 file after decryption. The plaintext `keystore-password.txt` must never be
 copied out of that protected recovery session.
+
+## Emulator verification
+
+With a disposable emulator running, `./gradlew connectedDebugAndroidTest` checks
+library/search/settings, the chapter player, metadata restoration, and real Media3
+playback against a local synthetic WAV server. UI fixtures use invented book titles.
+The instrumentation tests also save review screenshots under the app's external
+`files/review` directory; run the test APK manually with `adb shell am instrument`
+if screenshots need to survive Gradle's automatic test cleanup.
 
 ## Architecture
 

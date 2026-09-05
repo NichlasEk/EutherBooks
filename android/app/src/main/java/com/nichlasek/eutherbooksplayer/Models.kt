@@ -73,13 +73,24 @@ data class Bookmark(
     val mediaIndex: Int,
     val positionMs: Long,
     val updatedAtMs: Long,
+    val chapterTitle: String = "",
 )
+
+data class BookVoice(val voiceId: String, val modelBackend: String)
 
 data class QueueEntry(
     val uri: String,
     val mediaId: String,
     val title: String,
     val subtitle: String,
+    val bookId: String = "",
+    val chapterIndex: Int = -1,
+    val chapterTitle: String = "",
+    val voiceId: String = "",
+    val modelBackend: String = "",
+    val partIndex: Int = 0,
+    val durationMs: Long = 0,
+    val chapterComplete: Boolean = false,
 )
 
 data class SavedQueue(

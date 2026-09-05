@@ -76,6 +76,7 @@ class PlaybackService : MediaSessionService() {
                 }
             }
         })
+        player.setPlaybackSpeed(AppPreferences(this).playbackSpeed)
         restoreQueue()
         mediaSession = MediaSession.Builder(this, player).build()
         persistenceJob = serviceScope.launch {
@@ -115,14 +116,11 @@ class PlaybackService : MediaSessionService() {
         if (!::player.isInitialized || player.mediaItemCount == 0) return
         val entries = (0 until player.mediaItemCount).map { index ->
             val item = player.getMediaItemAt(index)
-            QueueEntry(
-                uri = item.localConfiguration?.uri?.toString().orEmpty(),
-                mediaId = item.mediaId,
-                title = item.mediaMetadata.title?.toString().orEmpty(),
-                subtitle = item.mediaMetadata.subtitle?.toString().orEmpty(),
-            )
+            item.queueEntry()
         }.filter { it.uri.isNotBlank() }
-        AppPreferences(this).savedQueue = SavedQueue(
+        val preferences = AppPreferences(this)
+        player.currentMediaItem?.queueEntry()?.bookmark(player.currentPosition)?.let(preferences::saveBookmark)
+        preferences.savedQueue = SavedQueue(
             entries = entries,
             index = player.currentMediaItemIndex.coerceAtLeast(0),
             positionMs = player.currentPosition.coerceAtLeast(0),
@@ -130,18 +128,6 @@ class PlaybackService : MediaSessionService() {
         )
     }
 }
-
-internal fun QueueEntry.toMediaItem(): MediaItem = MediaItem.Builder()
-    .setUri(uri)
-    .setMediaId(mediaId)
-    .setMediaMetadata(
-        MediaMetadata.Builder()
-            .setTitle(title)
-            .setSubtitle(subtitle)
-            .setArtist("EutherBooks")
-            .build(),
-    )
-    .build()
 
 @UnstableApi
 private class FailoverHttpDataSourceFactory(context: Context) : DataSource.Factory {
@@ -192,7 +178,7 @@ private class FailoverHttpDataSource(context: Context) : DataSource {
     private fun createHttpSource(): DataSource {
         val token = AppPreferences(appContext).authToken
         return DefaultHttpDataSource.Factory()
-            .setUserAgent("EutherBooksPlayer/0.2.0-alpha.2")
+            .setUserAgent("EutherBooksPlayer/0.2.0-alpha.3")
             .setAllowCrossProtocolRedirects(true)
             .apply {
                 if (token.isNotBlank()) {

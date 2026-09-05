@@ -3,14 +3,14 @@ set -euo pipefail
 
 ANDROID_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INPUT_APK="${1:-$ANDROID_DIR/app/build/outputs/apk/release/app-release-unsigned.apk}"
-OUTPUT_APK="${2:-$ANDROID_DIR/app/build/outputs/apk/release/EutherBooksPlayer-0.2.0-alpha.2-signed.apk}"
+OUTPUT_APK="${2:-$ANDROID_DIR/app/build/outputs/apk/release/EutherBooksPlayer-0.2.0-alpha.3-signed.apk}"
 KEYSTORE="${EUTHERBOOKS_PLAYER_KEYSTORE:-$HOME/.eutherlist/eutherlist-sideload.jks}"
 KEY_ALIAS="${EUTHERBOOKS_PLAYER_KEY_ALIAS:-eutherlist}"
 CREDENTIAL_NAME="eutherbooks-player-keystore-pass"
 CREDENTIAL_FILE="${EUTHERBOOKS_PLAYER_CREDENTIAL:-${XDG_CONFIG_HOME:-$HOME/.config}/credentials/$CREDENTIAL_NAME.cred}"
 EXPECTED_CERT_SHA256="b9ff592d5c8b183c339836537b43e2b0f6b7e65618db084f4e84631ef9fd9c3c"
 EXPECTED_APPLICATION_ID="com.nichlasek.eutherbooksplayer"
-EXPECTED_VERSION_CODE="1079"
+EXPECTED_VERSION_CODE="1080"
 
 for command_name in systemd-creds apksigner aapt sha256sum; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
